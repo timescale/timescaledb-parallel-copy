@@ -43,7 +43,7 @@ type batch struct {
 
 // Parse args
 func init() {
-	flag.StringVar(&postgresConnect, "connection", "host=postgres user=postgres sslmode=disable", "PostgreSQL connection url")
+	flag.StringVar(&postgresConnect, "connection", "host=localhost user=postgres sslmode=disable", "PostgreSQL connection url")
 	flag.StringVar(&dbName, "db-name", "test", "Database where the destination table exists")
 	flag.StringVar(&tableName, "table", "test_table", "Destination table for insertions")
 	flag.BoolVar(&truncate, "truncate", false, "Truncate the destination table before insert")
@@ -62,7 +62,7 @@ func init() {
 }
 
 func getConnectString() string {
-	return fmt.Sprintf("host=localhost user=postgres sslmode=disable dbname=%s", dbName)
+	return fmt.Sprintf("%s dbname=%s", postgresConnect, dbName)
 }
 
 func main() {
