@@ -33,3 +33,7 @@ $ timescaledb-parallel-copy --db-name test --table sample --file foo.csv \
 
 Other options and flags are also available, use
  `timescaledb-parallel-copy --help` for more information.
+
+
+### Contributing
+We welcome contributions to this utility, which like TimescaleDB is released under the Apache2 Open Source License.  The same [Contributors Agreement](//github.com/timescale/timescaledb/blob/master/CONTRIBUTING.md) applies; please sign the [Contributor License Agreement](https://cla-assistant.io/timescale/timescaledb-parallel-copy) (CLA) if you're a new contributor.
