@@ -183,11 +183,15 @@ func processBatches(wg *sync.WaitGroup, C chan *batch) {
 		start := time.Now()
 
 		tx := dbBench.MustBegin()
+		delimStr := fmt.Sprintf("'%s'", splitCharacter)
+		if splitCharacter == "\\t" {
+			delimStr = "E" + delimStr
+		}
 		var copyCmd string
 		if columns != "" {
-			copyCmd = fmt.Sprintf("COPY \"%s\"(%s) FROM STDIN WITH DELIMITER '%s' %s", tableName, columns, splitCharacter, copyOptions)
+			copyCmd = fmt.Sprintf("COPY \"%s\"(%s) FROM STDIN WITH DELIMITER %s %s", tableName, columns, delimStr, copyOptions)
 		} else {
-			copyCmd = fmt.Sprintf("COPY \"%s\" FROM STDIN WITH DELIMITER '%s' %s", tableName, splitCharacter, copyOptions)
+			copyCmd = fmt.Sprintf("COPY \"%s\" FROM STDIN WITH DELIMITER %s %s", tableName, delimStr, copyOptions)
 		}
 
 		stmt, err := tx.Prepare(copyCmd)
@@ -195,11 +199,20 @@ func processBatches(wg *sync.WaitGroup, C chan *batch) {
 			panic(err)
 		}
 
+		// Need to cover the string-ified version of the character to actual character for correct split
+		sChar := splitCharacter
+		if sChar == "\\t" {
+			sChar = "\t"
+		}
 		for _, line := range batch.rows {
-			sp := strings.Split(line, splitCharacter)
+			sp := strings.Split(line, sChar)
 			columnCountWorker += int64(len(sp))
+			args := make([]interface{}, len(sp))
+			for i, v := range sp {
+				args[i] = v
+			}
 
-			_, err = stmt.Exec(line)
+			_, err = stmt.Exec(args...)
 			if err != nil {
 				panic(err)
 			}
