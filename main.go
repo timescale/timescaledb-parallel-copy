@@ -207,12 +207,18 @@ func processBatches(wg *sync.WaitGroup, C chan *batch) {
 		for _, line := range batch.rows {
 			sp := strings.Split(line, sChar)
 			columnCountWorker += int64(len(sp))
-			args := make([]interface{}, len(sp))
-			for i, v := range sp {
-				args[i] = v
+			// For some reason this is only needed for tab splitting
+			if sChar == "\t" {
+				args := make([]interface{}, len(sp))
+				for i, v := range sp {
+					args[i] = v
+				}
+				_, err = stmt.Exec(args...)
+			} else {
+
+				_, err = stmt.Exec(line)
 			}
 
-			_, err = stmt.Exec(args...)
 			if err != nil {
 				panic(err)
 			}
