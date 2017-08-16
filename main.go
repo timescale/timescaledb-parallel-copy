@@ -20,6 +20,7 @@ import (
 var (
 	postgresConnect string
 	dbName          string
+	schemaName      string
 	tableName       string
 	truncate        bool
 
@@ -47,6 +48,7 @@ func init() {
 	flag.StringVar(&postgresConnect, "connection", "host=localhost user=postgres sslmode=disable", "PostgreSQL connection url")
 	flag.StringVar(&dbName, "db-name", "test", "Database where the destination table exists")
 	flag.StringVar(&tableName, "table", "test_table", "Destination table for insertions")
+	flag.StringVar(&schemaName, "schema", "public", "Desination table's schema")
 	flag.BoolVar(&truncate, "truncate", false, "Truncate the destination table before insert")
 
 	flag.StringVar(&copyOptions, "copy-options", "", "Additional options to pass to COPY (ex. NULL 'NULL')")
@@ -189,9 +191,9 @@ func processBatches(wg *sync.WaitGroup, C chan *batch) {
 		}
 		var copyCmd string
 		if columns != "" {
-			copyCmd = fmt.Sprintf("COPY \"%s\"(%s) FROM STDIN WITH DELIMITER %s %s", tableName, columns, delimStr, copyOptions)
+			copyCmd = fmt.Sprintf("COPY \"%s\".\"%s\"(%s) FROM STDIN WITH DELIMITER %s %s", schemaName, tableName, columns, delimStr, copyOptions)
 		} else {
-			copyCmd = fmt.Sprintf("COPY \"%s\" FROM STDIN WITH DELIMITER %s %s", tableName, delimStr, copyOptions)
+			copyCmd = fmt.Sprintf("COPY \"%s\".\"%s\" FROM STDIN WITH DELIMITER %s %s", schemaName, tableName, delimStr, copyOptions)
 		}
 
 		stmt, err := tx.Prepare(copyCmd)
