@@ -26,6 +26,7 @@ var (
 	copyOptions    string
 	splitCharacter string
 	fromFile       string
+	columns        string
 
 	workers         int
 	batchSize       int
@@ -51,6 +52,7 @@ func init() {
 	flag.StringVar(&copyOptions, "copy-options", "", "Additional options to pass to COPY (ex. NULL 'NULL')")
 	flag.StringVar(&splitCharacter, "split", ",", "Character to split by")
 	flag.StringVar(&fromFile, "file", "", "File to read from rather than stdin")
+	flag.StringVar(&columns, "columns", "", "Comma-separated columns present in CSV")
 
 	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert")
 	flag.IntVar(&workers, "workers", 1, "Number of parallel requests to make")
@@ -181,7 +183,12 @@ func processBatches(wg *sync.WaitGroup, C chan *batch) {
 		start := time.Now()
 
 		tx := dbBench.MustBegin()
-		copyCmd := fmt.Sprintf("COPY \"%s\" FROM STDIN DELIMITER '%s' %s", tableName, splitCharacter, copyOptions)
+		var copyCmd string
+		if columns != "" {
+			copyCmd = fmt.Sprintf("COPY \"%s\"(%s) FROM STDIN WITH DELIMITER '%s' %s", tableName, columns, splitCharacter, copyOptions)
+		} else {
+			copyCmd = fmt.Sprintf("COPY \"%s\" FROM STDIN WITH DELIMITER '%s' %s", tableName, splitCharacter, copyOptions)
+		}
 
 		stmt, err := tx.Prepare(copyCmd)
 		if err != nil {
