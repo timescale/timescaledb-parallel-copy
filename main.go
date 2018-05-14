@@ -69,10 +69,14 @@ func getConnectString() string {
 	return fmt.Sprintf("%s dbname=%s", postgresConnect, dbName)
 }
 
+func getFullTableName() string {
+	return fmt.Sprintf("\"%s\".\"%s\"", schemaName, tableName)
+}
+
 func main() {
 	if truncate { // Remove existing data from the table
 		dbBench := sqlx.MustConnect("postgres", getConnectString())
-		_, err := dbBench.Exec(fmt.Sprintf("TRUNCATE \"%s\"", tableName))
+		_, err := dbBench.Exec(fmt.Sprintf("TRUNCATE %s", getFullTableName()))
 		if err != nil {
 			panic(err)
 		}
@@ -191,9 +195,9 @@ func processBatches(wg *sync.WaitGroup, C chan *batch) {
 		}
 		var copyCmd string
 		if columns != "" {
-			copyCmd = fmt.Sprintf("COPY \"%s\".\"%s\"(%s) FROM STDIN WITH DELIMITER %s %s", schemaName, tableName, columns, delimStr, copyOptions)
+			copyCmd = fmt.Sprintf("COPY %s(%s) FROM STDIN WITH DELIMITER %s %s", getFullTableName(), columns, delimStr, copyOptions)
 		} else {
-			copyCmd = fmt.Sprintf("COPY \"%s\".\"%s\" FROM STDIN WITH DELIMITER %s %s", schemaName, tableName, delimStr, copyOptions)
+			copyCmd = fmt.Sprintf("COPY %s FROM STDIN WITH DELIMITER %s %s", getFullTableName(), delimStr, copyOptions)
 		}
 
 		stmt, err := tx.Prepare(copyCmd)
