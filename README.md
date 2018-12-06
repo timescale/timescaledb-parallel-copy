@@ -29,6 +29,10 @@ $ timescaledb-parallel-copy --db-name test --table sample --file foo.csv \
 # 2 workers, report progress every 30s
 $ timescaledb-parallel-copy --db-name test --table sample --file foo.csv \
     --workers 2 --reporting-period 30s
+
+# Treat literal string 'NULL' as NULLs:
+$ timescaledb-parallel-copy --db-name test --table sample --file foo.csv \
+    --copy-options "NULL 'NULL' CSV"
 ```
 
 Other options and flags are also available, use

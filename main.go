@@ -51,7 +51,7 @@ func init() {
 	flag.StringVar(&schemaName, "schema", "public", "Desination table's schema")
 	flag.BoolVar(&truncate, "truncate", false, "Truncate the destination table before insert")
 
-	flag.StringVar(&copyOptions, "copy-options", "", "Additional options to pass to COPY (ex. NULL 'NULL')")
+	flag.StringVar(&copyOptions, "copy-options", "CSV", "Additional options to pass to COPY (e.g., NULL 'NULL')")
 	flag.StringVar(&splitCharacter, "split", ",", "Character to split by")
 	flag.StringVar(&fromFile, "file", "", "File to read from rather than stdin")
 	flag.StringVar(&columns, "columns", "", "Comma-separated columns present in CSV")
