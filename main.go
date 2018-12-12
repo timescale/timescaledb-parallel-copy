@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -14,6 +15,11 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+)
+
+const (
+	binName = "timescaledb-parallel-copy"
+	version = "0.1.0"
 )
 
 // Flag vars
@@ -34,6 +40,7 @@ var (
 	logBatches      bool
 	reportingPeriod time.Duration
 	verbose         bool
+	showVersion     bool
 
 	columnCount int64
 	rowCount    int64
@@ -62,6 +69,8 @@ func init() {
 	flag.DurationVar(&reportingPeriod, "reporting-period", 0*time.Second, "Period to report insert stats; if 0s, intermediate results will not be reported")
 	flag.BoolVar(&verbose, "verbose", false, "Print more information about copying statistics")
 
+	flag.BoolVar(&showVersion, "version", false, "Show the version of this tool")
+
 	flag.Parse()
 }
 
@@ -74,6 +83,11 @@ func getFullTableName() string {
 }
 
 func main() {
+	if showVersion {
+		fmt.Printf("%s %s (%s %s)\n", binName, version, runtime.GOOS, runtime.GOARCH)
+		os.Exit(0)
+	}
+
 	if truncate { // Remove existing data from the table
 		dbBench := sqlx.MustConnect("postgres", getConnectString())
 		_, err := dbBench.Exec(fmt.Sprintf("TRUNCATE %s", getFullTableName()))
