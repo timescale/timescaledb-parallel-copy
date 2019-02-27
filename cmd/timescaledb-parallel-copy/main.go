@@ -43,8 +43,7 @@ var (
 	verbose         bool
 	showVersion     bool
 
-	columnCount int64
-	rowCount    int64
+	rowCount int64
 )
 
 type batch struct {
@@ -207,7 +206,6 @@ func processBatches(wg *sync.WaitGroup, C chan *batch) {
 	dbBench := sqlx.MustConnect("postgres", getConnectString())
 	defer dbBench.Close()
 
-	columnCountWorker := int64(0)
 	for batch := range C {
 		start := time.Now()
 
@@ -234,17 +232,15 @@ func processBatches(wg *sync.WaitGroup, C chan *batch) {
 			sChar = "\t"
 		}
 		for _, line := range batch.rows {
-			sp := strings.Split(line, sChar)
-			columnCountWorker += int64(len(sp))
 			// For some reason this is only needed for tab splitting
 			if sChar == "\t" {
+				sp := strings.Split(line, sChar)
 				args := make([]interface{}, len(sp))
 				for i, v := range sp {
 					args[i] = v
 				}
 				_, err = stmt.Exec(args...)
 			} else {
-
 				_, err = stmt.Exec(line)
 			}
 
@@ -252,9 +248,8 @@ func processBatches(wg *sync.WaitGroup, C chan *batch) {
 				panic(err)
 			}
 		}
-		atomic.AddInt64(&columnCount, columnCountWorker)
+
 		atomic.AddInt64(&rowCount, int64(len(batch.rows)))
-		columnCountWorker = 0
 
 		err = stmt.Close()
 		if err != nil {
