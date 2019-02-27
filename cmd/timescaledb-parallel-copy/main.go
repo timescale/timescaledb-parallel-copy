@@ -34,6 +34,7 @@ var (
 	splitCharacter string
 	fromFile       string
 	columns        string
+	skipHeader     bool
 
 	workers         int
 	batchSize       int
@@ -62,6 +63,7 @@ func init() {
 	flag.StringVar(&splitCharacter, "split", ",", "Character to split by")
 	flag.StringVar(&fromFile, "file", "", "File to read from rather than stdin")
 	flag.StringVar(&columns, "columns", "", "Comma-separated columns present in CSV")
+	flag.BoolVar(&skipHeader, "skip-header", false, "Skip the first line of the input")
 
 	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert")
 	flag.IntVar(&workers, "workers", 1, "Number of parallel requests to make")
@@ -170,6 +172,13 @@ func report() {
 func scan(itemsPerBatch int, scanner *bufio.Scanner, batchChan chan *batch) int64 {
 	rows := make([]string, 0, itemsPerBatch)
 	var linesRead int64
+
+	if skipHeader {
+		if verbose {
+			fmt.Println("Skipping the first line of the input.")
+		}
+		scanner.Scan()
+	}
 
 	for scanner.Scan() {
 		linesRead++
