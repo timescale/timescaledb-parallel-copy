@@ -19,7 +19,7 @@ import (
 
 const (
 	binName = "timescaledb-parallel-copy"
-	version = "0.2.0"
+	version = "0.3.0-dev"
 )
 
 // Flag vars
@@ -37,6 +37,7 @@ var (
 	skipHeader     bool
 
 	workers         int
+	limit           int64
 	batchSize       int
 	logBatches      bool
 	reportingPeriod time.Duration
@@ -65,6 +66,7 @@ func init() {
 	flag.BoolVar(&skipHeader, "skip-header", false, "Skip the first line of the input")
 
 	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert")
+	flag.Int64Var(&limit, "limit", 0, "Number of rows to insert overall; 0 means to insert all")
 	flag.IntVar(&workers, "workers", 1, "Number of parallel requests to make")
 	flag.BoolVar(&logBatches, "log-batches", false, "Whether to time individual batches.")
 	flag.DurationVar(&reportingPeriod, "reporting-period", 0*time.Second, "Period to report insert stats; if 0s, intermediate results will not be reported")
@@ -116,7 +118,7 @@ func main() {
 	}
 
 	var wg sync.WaitGroup
-	batchChan := make(chan *batch, workers)
+	batchChan := make(chan *batch, workers*2)
 
 	// Generate COPY workers
 	for i := 0; i < workers; i++ {
@@ -158,7 +160,7 @@ func report() {
 		overallRowrate := float64(rCount) / float64(now.Sub(start).Seconds())
 		totalTook := now.Sub(start)
 
-		fmt.Printf("at %v, row rate %f/sec (period), row rate %f/sec (overall), %E total rows\n", totalTook-(totalTook%time.Second), rowrate, overallRowrate, float64(rCount))
+		fmt.Printf("at %v, row rate %0.2f/sec (period), row rate %0.2f/sec (overall), %E total rows\n", totalTook-(totalTook%time.Second), rowrate, overallRowrate, float64(rCount))
 
 		prevRowCount = rCount
 		prevTime = now
@@ -180,13 +182,16 @@ func scan(itemsPerBatch int, scanner *bufio.Scanner, batchChan chan *batch) int6
 	}
 
 	for scanner.Scan() {
-		linesRead++
+		if limit != 0 && linesRead >= limit {
+			break
+		}
 
 		rows = append(rows, scanner.Text())
 		if len(rows) >= itemsPerBatch { // dispatch to COPY worker & reset
 			batchChan <- &batch{rows}
 			rows = make([]string, 0, itemsPerBatch)
 		}
+		linesRead++
 	}
 
 	if err := scanner.Err(); err != nil {
