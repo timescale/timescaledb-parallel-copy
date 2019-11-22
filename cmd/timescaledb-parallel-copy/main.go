@@ -13,8 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
+	"github.com/timescale/timescaledb-parallel-copy/internal/db"
 )
 
 const (
@@ -25,7 +25,7 @@ const (
 // Flag vars
 var (
 	postgresConnect string
-	dbName          string
+	overrides       []db.Overrideable
 	schemaName      string
 	tableName       string
 	truncate        bool
@@ -53,8 +53,9 @@ type batch struct {
 
 // Parse args
 func init() {
+	var dbName string
 	flag.StringVar(&postgresConnect, "connection", "host=localhost user=postgres sslmode=disable", "PostgreSQL connection url")
-	flag.StringVar(&dbName, "db-name", "test", "Database where the destination table exists")
+	flag.StringVar(&dbName, "db-name", "", "Database where the destination table exists")
 	flag.StringVar(&tableName, "table", "test_table", "Destination table for insertions")
 	flag.StringVar(&schemaName, "schema", "public", "Desination table's schema")
 	flag.BoolVar(&truncate, "truncate", false, "Truncate the destination table before insert")
@@ -75,14 +76,14 @@ func init() {
 	flag.BoolVar(&showVersion, "version", false, "Show the version of this tool")
 
 	flag.Parse()
-}
 
-func getConnectString() string {
-	return fmt.Sprintf("%s dbname=%s", postgresConnect, dbName)
+	if dbName != "" {
+		overrides = append(overrides, db.OverrideDBName(dbName))
+	}
 }
 
 func getFullTableName() string {
-	return fmt.Sprintf("\"%s\".\"%s\"", schemaName, tableName)
+	return fmt.Sprintf(`"%s"."%s"`, schemaName, tableName)
 }
 
 func main() {
@@ -92,13 +93,16 @@ func main() {
 	}
 
 	if truncate { // Remove existing data from the table
-		dbBench := sqlx.MustConnect("postgres", getConnectString())
-		_, err := dbBench.Exec(fmt.Sprintf("TRUNCATE %s", getFullTableName()))
+		dbx, err := db.Connect(postgresConnect, overrides...)
+		if err != nil {
+			panic(err)
+		}
+		_, err = dbx.Exec(fmt.Sprintf("TRUNCATE %s", getFullTableName()))
 		if err != nil {
 			panic(err)
 		}
 
-		err = dbBench.Close()
+		err = dbx.Close()
 		if err != nil {
 			panic(err)
 		}
@@ -207,14 +211,17 @@ func scan(itemsPerBatch int, scanner *bufio.Scanner, batchChan chan *batch) int6
 }
 
 // processBatches reads batches from C and writes them to the target server, while tracking stats on the write.
-func processBatches(wg *sync.WaitGroup, C chan *batch) {
-	dbBench := sqlx.MustConnect("postgres", getConnectString())
-	defer dbBench.Close()
+func processBatches(wg *sync.WaitGroup, c chan *batch) {
+	dbx, err := db.Connect(postgresConnect, overrides...)
+	if err != nil {
+		panic(err)
+	}
+	defer dbx.Close()
 
-	for batch := range C {
+	for batch := range c {
 		start := time.Now()
 
-		tx := dbBench.MustBegin()
+		tx := dbx.MustBegin()
 		delimStr := fmt.Sprintf("'%s'", splitCharacter)
 		if splitCharacter == "\\t" {
 			delimStr = "E" + delimStr
@@ -267,7 +274,7 @@ func processBatches(wg *sync.WaitGroup, C chan *batch) {
 		}
 
 		if logBatches {
-			took := time.Now().Sub(start)
+			took := time.Since(start)
 			fmt.Printf("[BATCH] took %v, batch size %d, row rate %f/sec\n", took, batchSize, float64(batchSize)/float64(took.Seconds()))
 		}
 
