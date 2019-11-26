@@ -13,13 +13,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/timescale/timescaledb-parallel-copy/internal/db"
 )
 
 const (
-	binName = "timescaledb-parallel-copy"
-	version = "0.3.0-dev"
+	binName    = "timescaledb-parallel-copy"
+	version    = "0.3.0-dev"
+	tabCharStr = "\\t"
 )
 
 // Flag vars
@@ -210,7 +212,8 @@ func scan(itemsPerBatch int, scanner *bufio.Scanner, batchChan chan *batch) int6
 	return linesRead
 }
 
-// processBatches reads batches from C and writes them to the target server, while tracking stats on the write.
+// processBatches reads batches from channel c and copies them to the target
+// server while tracking stats on the write.
 func processBatches(wg *sync.WaitGroup, c chan *batch) {
 	dbx, err := db.Connect(postgresConnect, overrides...)
 	if err != nil {
@@ -218,66 +221,75 @@ func processBatches(wg *sync.WaitGroup, c chan *batch) {
 	}
 	defer dbx.Close()
 
+	delimStr := "'" + splitCharacter + "'"
+	useSplitChar := splitCharacter
+	if splitCharacter == tabCharStr {
+		delimStr = "E" + delimStr
+		// Need to covert the string-ified version of the character to actual
+		// character for correct split
+		useSplitChar = "\t"
+	}
+
+	var copyCmd string
+	if columns != "" {
+		copyCmd = fmt.Sprintf("COPY %s(%s) FROM STDIN WITH DELIMITER %s %s", getFullTableName(), columns, delimStr, copyOptions)
+	} else {
+		copyCmd = fmt.Sprintf("COPY %s FROM STDIN WITH DELIMITER %s %s", getFullTableName(), delimStr, copyOptions)
+	}
+
 	for batch := range c {
 		start := time.Now()
-
-		tx := dbx.MustBegin()
-		delimStr := fmt.Sprintf("'%s'", splitCharacter)
-		if splitCharacter == "\\t" {
-			delimStr = "E" + delimStr
-		}
-		var copyCmd string
-		if columns != "" {
-			copyCmd = fmt.Sprintf("COPY %s(%s) FROM STDIN WITH DELIMITER %s %s", getFullTableName(), columns, delimStr, copyOptions)
-		} else {
-			copyCmd = fmt.Sprintf("COPY %s FROM STDIN WITH DELIMITER %s %s", getFullTableName(), delimStr, copyOptions)
-		}
-
-		stmt, err := tx.Prepare(copyCmd)
+		rows, err := processBatch(dbx, batch, copyCmd, useSplitChar)
 		if err != nil {
 			panic(err)
 		}
-
-		// Need to cover the string-ified version of the character to actual character for correct split
-		sChar := splitCharacter
-		if sChar == "\\t" {
-			sChar = "\t"
-		}
-		for _, line := range batch.rows {
-			// For some reason this is only needed for tab splitting
-			if sChar == "\t" {
-				sp := strings.Split(line, sChar)
-				args := make([]interface{}, len(sp))
-				for i, v := range sp {
-					args[i] = v
-				}
-				_, err = stmt.Exec(args...)
-			} else {
-				_, err = stmt.Exec(line)
-			}
-
-			if err != nil {
-				panic(err)
-			}
-		}
-
-		atomic.AddInt64(&rowCount, int64(len(batch.rows)))
-
-		err = stmt.Close()
-		if err != nil {
-			panic(err)
-		}
-
-		err = tx.Commit()
-		if err != nil {
-			panic(err)
-		}
+		atomic.AddInt64(&rowCount, rows)
 
 		if logBatches {
 			took := time.Since(start)
 			fmt.Printf("[BATCH] took %v, batch size %d, row rate %f/sec\n", took, batchSize, float64(batchSize)/float64(took.Seconds()))
 		}
-
 	}
 	wg.Done()
+}
+
+func processBatch(db *sqlx.DB, b *batch, copyCmd, splitChar string) (int64, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+
+	stmt, err := tx.Prepare(copyCmd)
+	if err != nil {
+		return 0, err
+	}
+
+	for _, line := range b.rows {
+		// For some reason this is only needed for tab splitting
+		if splitChar == "\t" {
+			sp := strings.Split(line, splitChar)
+			args := make([]interface{}, len(sp))
+			for i, v := range sp {
+				args[i] = v
+			}
+			_, err = stmt.Exec(args...)
+		} else {
+			_, err = stmt.Exec(line)
+		}
+
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	err = stmt.Close()
+	if err != nil {
+		return 0, err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(b.rows)), nil
 }
