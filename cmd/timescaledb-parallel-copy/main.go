@@ -38,6 +38,7 @@ var (
 	columns        string
 	skipHeader     bool
 
+	tokenSize       int
 	workers         int
 	limit           int64
 	batchSize       int
@@ -68,6 +69,7 @@ func init() {
 	flag.StringVar(&columns, "columns", "", "Comma-separated columns present in CSV")
 	flag.BoolVar(&skipHeader, "skip-header", false, "Skip the first line of the input")
 
+	flag.IntVar(&tokenSize, "token-size", bufio.MaxScanTokenSize, "Maximum size to use for tokens. By default, this is 64KB, so any value less than that will be ignored")
 	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert")
 	flag.Int64Var(&limit, "limit", 0, "Number of rows to insert overall; 0 means to insert all")
 	flag.IntVar(&workers, "workers", 1, "Number of parallel requests to make")
@@ -121,6 +123,13 @@ func main() {
 		scanner = bufio.NewScanner(file)
 	} else {
 		scanner = bufio.NewScanner(os.Stdin)
+	}
+
+	if tokenSize != 0 && tokenSize <= bufio.MaxScanTokenSize {
+		fmt.Printf("WARNING: provided --token-size (%d) is smaller than default (%d), ignoring\n", tokenSize, bufio.MaxScanTokenSize)
+	} else if tokenSize > bufio.MaxScanTokenSize {
+		buf := make([]byte, tokenSize)
+		scanner.Buffer(buf, tokenSize)
 	}
 
 	var wg sync.WaitGroup
