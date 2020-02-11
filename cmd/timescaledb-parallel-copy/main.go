@@ -125,7 +125,7 @@ func main() {
 		scanner = bufio.NewScanner(os.Stdin)
 	}
 
-	if tokenSize != 0 && tokenSize <= bufio.MaxScanTokenSize {
+	if tokenSize != 0 && tokenSize < bufio.MaxScanTokenSize {
 		fmt.Printf("WARNING: provided --token-size (%d) is smaller than default (%d), ignoring\n", tokenSize, bufio.MaxScanTokenSize)
 	} else if tokenSize > bufio.MaxScanTokenSize {
 		buf := make([]byte, tokenSize)
