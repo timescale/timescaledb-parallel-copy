@@ -35,9 +35,45 @@ $ timescaledb-parallel-copy --db-name test --table sample --file foo.csv \
     --copy-options "NULL 'NULL' CSV"
 ```
 
-Other options and flags are also available, use
- `timescaledb-parallel-copy --help` for more information.
+Other options and flags are also available:
 
+```
+$ timescaledb-parallel-copy --help
+
+Usage of timescaledb-parallel-copy:
+  -batch-size int
+        Number of rows per insert (default 5000)
+  -columns string
+        Comma-separated columns present in CSV
+  -connection string
+        PostgreSQL connection url (default "host=localhost user=postgres sslmode=disable")
+  -copy-options string
+        Additional options to pass to COPY (e.g., NULL 'NULL') (default "CSV")
+  -db-name string
+        Database where the destination table exists (default "test")
+  -file string
+        File to read from rather than stdin
+  -log-batches
+        Whether to time individual batches.
+  -reporting-period duration
+        Period to report insert stats; if 0s, intermediate results will not be reported
+  -schema string
+        Desination table's schema (default "public")
+  -skip-header
+        Skip the first line of the input
+  -split string
+        Character to split by (default ",")
+  -table string
+        Destination table for insertions (default "test_table")
+  -truncate
+        Truncate the destination table before insert
+  -verbose
+        Print more information about copying statistics
+  -version
+        Show the version of this tool
+  -workers int
+        Number of parallel requests to make (default 1)
+```
 
 ### Contributing
 We welcome contributions to this utility, which like TimescaleDB is released under the Apache2 Open Source License.  The same [Contributors Agreement](//github.com/timescale/timescaledb/blob/master/CONTRIBUTING.md) applies; please sign the [Contributor License Agreement](https://cla-assistant.io/timescale/timescaledb-parallel-copy) (CLA) if you're a new contributor.
