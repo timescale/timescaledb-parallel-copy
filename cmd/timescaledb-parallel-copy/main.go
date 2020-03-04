@@ -37,6 +37,7 @@ var (
 	fromFile       string
 	columns        string
 	skipHeader     bool
+	headerLinesCnt int
 
 	tokenSize       int
 	workers         int
@@ -68,6 +69,7 @@ func init() {
 	flag.StringVar(&fromFile, "file", "", "File to read from rather than stdin")
 	flag.StringVar(&columns, "columns", "", "Comma-separated columns present in CSV")
 	flag.BoolVar(&skipHeader, "skip-header", false, "Skip the first line of the input")
+	flag.IntVar(&headerLinesCnt, "header-line-count", 1, "Number of header lines")
 
 	flag.IntVar(&tokenSize, "token-size", bufio.MaxScanTokenSize, "Maximum size to use for tokens. By default, this is 64KB, so any value less than that will be ignored")
 	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert")
@@ -123,6 +125,11 @@ func main() {
 		scanner = bufio.NewScanner(file)
 	} else {
 		scanner = bufio.NewScanner(os.Stdin)
+	}
+
+	if headerLinesCnt < 0 {
+		fmt.Printf("WARNING: provided --header-line-count (%d) is negative, only positive allowed\n", headerLinesCnt)
+		os.Exit(1)
 	}
 
 	if tokenSize != 0 && tokenSize < bufio.MaxScanTokenSize {
@@ -191,9 +198,11 @@ func scan(itemsPerBatch int, scanner *bufio.Scanner, batchChan chan *batch) int6
 
 	if skipHeader {
 		if verbose {
-			fmt.Println("Skipping the first line of the input.")
+			fmt.Printf("Skipping the first %i lines of the input.\n", headerLinesCnt)
 		}
-		scanner.Scan()
+		for i := 0; i < headerLinesCnt; i++ {
+			scanner.Scan()
+		}
 	}
 
 	for scanner.Scan() {
