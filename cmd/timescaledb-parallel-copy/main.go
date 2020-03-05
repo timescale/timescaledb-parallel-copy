@@ -198,7 +198,7 @@ func scan(itemsPerBatch int, scanner *bufio.Scanner, batchChan chan *batch) int6
 
 	if skipHeader {
 		if verbose {
-			fmt.Printf("Skipping the first %i lines of the input.\n", headerLinesCnt)
+			fmt.Printf("Skipping the first %d lines of the input.\n", headerLinesCnt)
 		}
 		for i := 0; i < headerLinesCnt; i++ {
 			scanner.Scan()
