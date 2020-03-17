@@ -20,7 +20,7 @@ import (
 
 const (
 	binName    = "timescaledb-parallel-copy"
-	version    = "0.3.0-dev"
+	version    = "0.3.0"
 	tabCharStr = "\\t"
 )
 
@@ -61,7 +61,7 @@ func init() {
 	flag.StringVar(&postgresConnect, "connection", "host=localhost user=postgres sslmode=disable", "PostgreSQL connection url")
 	flag.StringVar(&dbName, "db-name", "", "Database where the destination table exists")
 	flag.StringVar(&tableName, "table", "test_table", "Destination table for insertions")
-	flag.StringVar(&schemaName, "schema", "public", "Desination table's schema")
+	flag.StringVar(&schemaName, "schema", "public", "Destination table's schema")
 	flag.BoolVar(&truncate, "truncate", false, "Truncate the destination table before insert")
 
 	flag.StringVar(&copyOptions, "copy-options", "CSV", "Additional options to pass to COPY (e.g., NULL 'NULL')")

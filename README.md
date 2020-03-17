@@ -50,21 +50,27 @@ Usage of timescaledb-parallel-copy:
   -copy-options string
         Additional options to pass to COPY (e.g., NULL 'NULL') (default "CSV")
   -db-name string
-        Database where the destination table exists (default "test")
+        Database where the destination table exists
   -file string
         File to read from rather than stdin
+  -header-line-count int
+        Number of header lines (default 1)
+  -limit int
+        Number of rows to insert overall; 0 means to insert all
   -log-batches
         Whether to time individual batches.
   -reporting-period duration
         Period to report insert stats; if 0s, intermediate results will not be reported
   -schema string
-        Desination table's schema (default "public")
+        Destination table's schema (default "public")
   -skip-header
         Skip the first line of the input
   -split string
         Character to split by (default ",")
   -table string
         Destination table for insertions (default "test_table")
+  -token-size int
+        Maximum size to use for tokens. By default, this is 64KB, so any value less than that will be ignored (default 65536)
   -truncate
         Truncate the destination table before insert
   -verbose
