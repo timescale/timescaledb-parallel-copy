@@ -127,8 +127,8 @@ func main() {
 		scanner = bufio.NewScanner(os.Stdin)
 	}
 
-	if headerLinesCnt < 0 {
-		fmt.Printf("WARNING: provided --header-line-count (%d) is negative, only positive allowed\n", headerLinesCnt)
+	if headerLinesCnt <= 0 {
+		fmt.Printf("WARNING: provided --header-line-count (%d) must be greater than 0\n", headerLinesCnt)
 		os.Exit(1)
 	}
 
