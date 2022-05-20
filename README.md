@@ -7,7 +7,7 @@ into [TimescaleDB.](//github.com/timescale/timescaledb/)
 ### Getting started
 You need the Go runtime (1.6+) installed, then simply `go get` this repo:
 ```bash
-$ go get github.com/timescale/timescaledb-parallel-copy/cmd/timescaledb-parallel-copy
+$ go install github.com/timescale/timescaledb-parallel-copy/cmd/timescaledb-parallel-copy@latest
 ```
 
 Before using this program to bulk insert data, your database should
