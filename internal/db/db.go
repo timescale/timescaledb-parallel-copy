@@ -1,13 +1,16 @@
 package db
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v4/stdlib"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -143,7 +146,7 @@ func Connect(connStr string, overrides ...Overrideable) (*sqlx.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not connect: %v", err)
 	}
-	db, err := sqlx.Connect("postgres", mcc.DSN())
+	db, err := sqlx.Connect("pgx", mcc.DSN())
 	if err != nil {
 		return nil, fmt.Errorf("could not connect: %v", err)
 	}
@@ -154,42 +157,50 @@ func Connect(connStr string, overrides ...Overrideable) (*sqlx.DB, error) {
 // uses a tab delimiter, splitChar must be set to "\t"; otherwise it is ignored.
 // Returns the number of rows inserted.
 func CopyFromLines(db *sqlx.DB, lines []string, copyCmd, splitChar string) (int64, error) {
-	tx, err := db.Begin()
+	conn, err := db.Conn(context.Background())
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("acquiring DB connection for COPY: %w", err)
 	}
+	defer conn.Close()
 
-	stmt, err := tx.Prepare(copyCmd)
-	if err != nil {
-		return 0, err
-	}
+	// Our slice of lines needs to be presented to PgConn.CopyFrom() as a
+	// unified io.Reader. Joining the entire string would eat memory, so use an
+	// intermediary io.Pipe instead.
+	//
+	// TODO: just take the bytes directly as an argument rather than converting
+	// to a slice and back
+	r, w := io.Pipe()
+	go func() {
+		defer w.Close()
 
-	for _, line := range lines {
-		// For some reason this is only needed for tab splitting
-		if splitChar == "\t" {
-			sp := strings.Split(line, splitChar)
-			args := make([]interface{}, len(sp))
-			for i, v := range sp {
-				args[i] = v
+		for _, line := range lines {
+			if _, err := fmt.Fprintln(w, line); err != nil {
+				// If the pipe's not already closed with an error, add one for
+				// further debugging. In particular we want to ensure that the
+				// read half returns an error, so that the CopyFrom transaction
+				// doesn't commit below.
+				err = fmt.Errorf("writing to COPY pipe: %w", err)
+				w.CloseWithError(err)
+				return
 			}
-			_, err = stmt.Exec(args...)
-		} else {
-			_, err = stmt.Exec(line)
 		}
+	}()
 
-		if err != nil {
-			return 0, err
-		}
-	}
+	// pgx requires us to use the low-level API for a raw COPY FROM operation.
+	err = conn.Raw(func(driverConn interface{}) error {
+		defer r.Close()
 
-	err = stmt.Close()
+		// Unfortunately there are three layers to unwrap here: the stdlib.Conn,
+		// the pgx.Conn, and the pgconn.PgConn.
+		pg := driverConn.(*stdlib.Conn).Conn().PgConn()
+
+		_, err := pg.CopyFrom(context.Background(), r, copyCmd)
+		return err
+	})
+
 	if err != nil {
 		return 0, err
 	}
 
-	err = tx.Commit()
-	if err != nil {
-		return 0, err
-	}
 	return int64(len(lines)), nil
 }

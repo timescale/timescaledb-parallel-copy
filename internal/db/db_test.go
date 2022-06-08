@@ -1,12 +1,14 @@
 package db_test
 
 import (
+	"errors"
 	"os"
 	"reflect"
 	"testing"
 
+	"github.com/jackc/pgconn"
+	_ "github.com/jackc/pgx/v4/stdlib"
 	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
 
 	"github.com/timescale/timescaledb-parallel-copy/internal/db"
 )
@@ -53,7 +55,7 @@ func TestCopyFromLines(t *testing.T) {
 				{"a", int64(34)},
 				{"null", int64(42)},
 				{"some whitespace", int64(-13)},
-				{`  more\twhitespace  `, int64(0)}, // TODO incorrect?
+				{"  more\twhitespace  ", int64(0)},
 				{nil, nil},
 			},
 		},
@@ -88,7 +90,7 @@ func TestCopyFromLines(t *testing.T) {
 			expected: [][]interface{}{
 				{nil},
 				{""},
-				{"quoted,delimiter\\\\t"}, // TODO incorrect
+				{"quoted,delimiter\\t"},
 				{`quoted"quotes`},
 				{"multi\nline column"}, // TODO: this is incorrectly counted as two rows
 			},
@@ -121,6 +123,19 @@ func TestCopyFromLines(t *testing.T) {
 				{nil, int64(2)},
 				{"b", nil},
 				{"c", int64(3)},
+			},
+		},
+		{
+			name:    "bytea conversion",
+			columns: "(b BYTEA)",
+			copyCmd: `COPY test FROM STDIN WITH DELIMITER ',' CSV`,
+			lines: []string{
+				`\x68656c6c6f20776f726c64`,
+				`\x666f6f626172`,
+			},
+			expected: [][]interface{}{
+				{[]byte("hello world")},
+				{[]byte("foobar")},
 			},
 		},
 	}
@@ -166,4 +181,29 @@ func TestCopyFromLines(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("bad COPY statements bubble up errors", func(t *testing.T) {
+		d := mustConnect(t)
+		defer d.Close()
+
+		// Have plenty of data ready to write, to make sure that the internal
+		// pipes are correctly maintained during an error.
+		lines := make([]string, 10000)
+		badCopy := `COPY BUT NOT REALLY`
+
+		num, err := db.CopyFromLines(d, lines, badCopy, "")
+		if num != 0 {
+			t.Errorf("CopyFromLines() reported %d new rows, want 0", num)
+		}
+
+		var pgerr *pgconn.PgError
+		if !errors.As(err, &pgerr) {
+			t.Fatalf("CopyFromLines() returned unexpected error %#v; want type %T", err, pgerr)
+		}
+
+		const SQLSTATE_SYNTAX_ERROR = "42601"
+		if pgerr.Code != SQLSTATE_SYNTAX_ERROR {
+			t.Errorf("CopyFromLines() returned error %s, want %s", pgerr.Code, SQLSTATE_SYNTAX_ERROR)
+		}
+	})
 }

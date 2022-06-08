@@ -5,7 +5,7 @@ PostgreSQL's built-in `COPY` functionality for bulk inserting data
 into [TimescaleDB.](//github.com/timescale/timescaledb/)
 
 ### Getting started
-You need the Go runtime (1.6+) installed, then simply `go get` this repo:
+You need the Go runtime (1.13+) installed, then simply `go get` this repo:
 ```bash
 $ go install github.com/timescale/timescaledb-parallel-copy/cmd/timescaledb-parallel-copy@latest
 ```

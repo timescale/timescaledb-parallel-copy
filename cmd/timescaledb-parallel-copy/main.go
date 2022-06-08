@@ -12,13 +12,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v4/stdlib"
+
 	"github.com/timescale/timescaledb-parallel-copy/internal/db"
 )
 
 const (
 	binName    = "timescaledb-parallel-copy"
-	version    = "0.3.0"
+	version    = "0.4.0-dev"
 	tabCharStr = "\\t"
 )
 
