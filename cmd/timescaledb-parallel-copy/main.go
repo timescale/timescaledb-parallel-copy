@@ -8,12 +8,10 @@ import (
 	"log"
 	"os"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/timescale/timescaledb-parallel-copy/internal/db"
 )
@@ -257,7 +255,7 @@ func processBatches(wg *sync.WaitGroup, c chan *batch) {
 
 	for batch := range c {
 		start := time.Now()
-		rows, err := processBatch(dbx, batch, copyCmd, useSplitChar)
+		rows, err := db.CopyFromLines(dbx, batch.rows, copyCmd, useSplitChar)
 		if err != nil {
 			panic(err)
 		}
@@ -269,45 +267,4 @@ func processBatches(wg *sync.WaitGroup, c chan *batch) {
 		}
 	}
 	wg.Done()
-}
-
-func processBatch(db *sqlx.DB, b *batch, copyCmd, splitChar string) (int64, error) {
-	tx, err := db.Begin()
-	if err != nil {
-		return 0, err
-	}
-
-	stmt, err := tx.Prepare(copyCmd)
-	if err != nil {
-		return 0, err
-	}
-
-	for _, line := range b.rows {
-		// For some reason this is only needed for tab splitting
-		if splitChar == "\t" {
-			sp := strings.Split(line, splitChar)
-			args := make([]interface{}, len(sp))
-			for i, v := range sp {
-				args[i] = v
-			}
-			_, err = stmt.Exec(args...)
-		} else {
-			_, err = stmt.Exec(line)
-		}
-
-		if err != nil {
-			return 0, err
-		}
-	}
-
-	err = stmt.Close()
-	if err != nil {
-		return 0, err
-	}
-
-	err = tx.Commit()
-	if err != nil {
-		return 0, err
-	}
-	return int64(len(b.rows)), nil
 }

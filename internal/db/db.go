@@ -149,3 +149,47 @@ func Connect(connStr string, overrides ...Overrideable) (*sqlx.DB, error) {
 	}
 	return db, nil
 }
+
+// CopyFromLines bulk-loads data using the given copyCmd. If the COPY statement
+// uses a tab delimiter, splitChar must be set to "\t"; otherwise it is ignored.
+// Returns the number of rows inserted.
+func CopyFromLines(db *sqlx.DB, lines []string, copyCmd, splitChar string) (int64, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+
+	stmt, err := tx.Prepare(copyCmd)
+	if err != nil {
+		return 0, err
+	}
+
+	for _, line := range lines {
+		// For some reason this is only needed for tab splitting
+		if splitChar == "\t" {
+			sp := strings.Split(line, splitChar)
+			args := make([]interface{}, len(sp))
+			for i, v := range sp {
+				args[i] = v
+			}
+			_, err = stmt.Exec(args...)
+		} else {
+			_, err = stmt.Exec(line)
+		}
+
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	err = stmt.Close()
+	if err != nil {
+		return 0, err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(lines)), nil
+}
