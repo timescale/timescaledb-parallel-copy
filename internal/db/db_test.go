@@ -5,8 +5,10 @@ import (
 	"os"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v4"
 	_ "github.com/jackc/pgx/v4/stdlib"
 	"github.com/jmoiron/sqlx"
 
@@ -206,6 +208,60 @@ func TestCopyFromLines(t *testing.T) {
 		const SQLSTATE_SYNTAX_ERROR = "42601"
 		if pgerr.Code != SQLSTATE_SYNTAX_ERROR {
 			t.Errorf("CopyFromLines() returned error %s, want %s", pgerr.Code, SQLSTATE_SYNTAX_ERROR)
+		}
+	})
+
+	t.Run("timestamp COPY honors DateStyle", func(t *testing.T) {
+		d := mustConnect(t)
+		defer d.Close()
+
+		// Get the connected database to ALTER.
+		var dbname string
+		if err := d.Get(&dbname, `SELECT current_database()`); err != nil {
+			t.Fatalf("retrieving current_database(): %v", err)
+		}
+
+		// Switch to a DMY datestyle.
+		dbname = pgx.Identifier{dbname}.Sanitize()
+		d.MustExec(`ALTER DATABASE ` + dbname + ` SET DateStyle = 'ISO, DMY'`)
+
+		// Reconnect after the DateStyle change; we don't want any pooled
+		// connections using the old setting. Also reset the DateStyle at the
+		// end of the test.
+		d.Close()
+		d = mustConnect(t)
+		defer d.Close()
+		defer d.MustExec(`ALTER DATABASE ` + dbname + ` RESET DateStyle`)
+
+		// Create our test table.
+		d.MustExec(`CREATE TABLE test(t timestamp)`)
+		defer d.MustExec(`DROP TABLE test`)
+
+		// Load the data. (Every row should have the same result.)
+		cmd := `COPY test FROM STDIN WITH DELIMITER ',' CSV`
+		lines := []string{
+			"2000-01-02 03:04:05", // should always be interpreted YYYY-MM-DD
+			"02-01-2000 03:04:05",
+			"02/01/2000 03:04:05",
+		}
+
+		_, err := db.CopyFromLines(d, lines, cmd)
+		if err != nil {
+			t.Fatalf("CopyFromLines() returned error: %v", err)
+		}
+
+		// Check the result.
+		var actual []time.Time
+		err = d.Select(&actual, `SELECT * FROM test`)
+		if err != nil {
+			t.Fatalf("reading test table: %v", err)
+		}
+
+		expected := time.Date(2000, 1, 2, 3, 4, 5, 0, time.UTC)
+		for i, stamp := range actual {
+			if stamp != expected {
+				t.Errorf("test row %d is %v, want %v", i, stamp, expected)
+			}
 		}
 	})
 }
