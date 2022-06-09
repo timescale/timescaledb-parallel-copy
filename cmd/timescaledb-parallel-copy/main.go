@@ -153,11 +153,13 @@ func main() {
 	}
 
 	start := time.Now()
-	rowsRead := scan(batchSize, scanner, batchChan)
+	scan(batchSize, scanner, batchChan)
 	close(batchChan)
 	wg.Wait()
 	end := time.Now()
 	took := end.Sub(start)
+
+	rowsRead := atomic.LoadInt64(&rowCount)
 	rowRate := float64(rowsRead) / float64(took.Seconds())
 
 	res := fmt.Sprintf("COPY %d", rowsRead)

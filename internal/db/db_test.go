@@ -90,7 +90,7 @@ func TestCopyFromLines(t *testing.T) {
 				{""},
 				{"quoted,delimiter\\t"},
 				{`quoted"quotes`},
-				{"multi\nline column"}, // TODO: this is incorrectly counted as two rows
+				{"multi\nline column"},
 			},
 		},
 		{
@@ -152,9 +152,6 @@ func TestCopyFromLines(t *testing.T) {
 			if err != nil {
 				t.Errorf("CopyFromLines() returned error: %v", err)
 			}
-			if num != int64(len(c.lines)) {
-				t.Errorf("CopyFromLines() = %d, want %d", num, len(c.lines))
-			}
 
 			// Check the resulting table contents.
 			rows, err := d.Queryx(`SELECT * FROM test;`)
@@ -162,19 +159,26 @@ func TestCopyFromLines(t *testing.T) {
 				t.Fatalf("d.Queryx() failed: %v", err)
 			}
 
-			var actual [][]interface{}
+			var actualData [][]interface{}
+			var actualCount int64
+
 			for rows.Next() {
 				row, err := rows.SliceScan()
 				if err != nil {
 					t.Fatalf("rows.SliceScan() failed: %v", err)
 				}
 
-				actual = append(actual, row)
+				actualData = append(actualData, row)
+				actualCount++
 			}
 
-			if !reflect.DeepEqual(actual, c.expected) {
+			if num != actualCount {
+				t.Errorf("CopyFromLines() = %d rows, want %d", num, actualCount)
+			}
+
+			if !reflect.DeepEqual(actualData, c.expected) {
 				t.Errorf("table contains unexpected contents after COPY")
-				t.Logf("got:\n%v", actual)
+				t.Logf("got:\n%v", actualData)
 				t.Logf("want:\n%v", c.expected)
 			}
 		})

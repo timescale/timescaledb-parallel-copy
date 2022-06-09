@@ -185,6 +185,8 @@ func CopyFromLines(db *sqlx.DB, lines []string, copyCmd string) (int64, error) {
 		}
 	}()
 
+	var rowCount int64
+
 	// pgx requires us to use the low-level API for a raw COPY FROM operation.
 	err = conn.Raw(func(driverConn interface{}) error {
 		defer r.Close()
@@ -193,13 +195,14 @@ func CopyFromLines(db *sqlx.DB, lines []string, copyCmd string) (int64, error) {
 		// the pgx.Conn, and the pgconn.PgConn.
 		pg := driverConn.(*stdlib.Conn).Conn().PgConn()
 
-		_, err := pg.CopyFrom(context.Background(), r, copyCmd)
-		return err
+		result, err := pg.CopyFrom(context.Background(), r, copyCmd)
+		if err != nil {
+			return err
+		}
+
+		rowCount = result.RowsAffected()
+		return nil
 	})
 
-	if err != nil {
-		return 0, err
-	}
-
-	return int64(len(lines)), nil
+	return rowCount, err
 }
