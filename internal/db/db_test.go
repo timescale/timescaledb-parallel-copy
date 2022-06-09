@@ -36,7 +36,6 @@ func TestCopyFromLines(t *testing.T) {
 		name     string
 		columns  string
 		copyCmd  string
-		delim    string
 		lines    []string
 		expected [][]interface{}
 	}{
@@ -63,7 +62,6 @@ func TestCopyFromLines(t *testing.T) {
 			name:    "simple types with tab delimiters",
 			columns: "(s TEXT, i INT)",
 			copyCmd: `COPY test FROM STDIN WITH DELIMITER E'\t' CSV`,
-			delim:   "\t",
 			lines: []string{
 				"a\t34",
 				"b\t42",
@@ -150,7 +148,7 @@ func TestCopyFromLines(t *testing.T) {
 			defer d.MustExec(`DROP TABLE test`)
 
 			// Load the rows into it.
-			num, err := db.CopyFromLines(d, c.lines, c.copyCmd, c.delim)
+			num, err := db.CopyFromLines(d, c.lines, c.copyCmd)
 			if err != nil {
 				t.Errorf("CopyFromLines() returned error: %v", err)
 			}
@@ -191,7 +189,7 @@ func TestCopyFromLines(t *testing.T) {
 		lines := make([]string, 10000)
 		badCopy := `COPY BUT NOT REALLY`
 
-		num, err := db.CopyFromLines(d, lines, badCopy, "")
+		num, err := db.CopyFromLines(d, lines, badCopy)
 		if num != 0 {
 			t.Errorf("CopyFromLines() reported %d new rows, want 0", num)
 		}

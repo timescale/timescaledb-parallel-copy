@@ -239,12 +239,8 @@ func processBatches(wg *sync.WaitGroup, c chan *batch) {
 	defer dbx.Close()
 
 	delimStr := "'" + splitCharacter + "'"
-	useSplitChar := splitCharacter
 	if splitCharacter == tabCharStr {
 		delimStr = "E" + delimStr
-		// Need to covert the string-ified version of the character to actual
-		// character for correct split
-		useSplitChar = "\t"
 	}
 
 	var copyCmd string
@@ -256,7 +252,7 @@ func processBatches(wg *sync.WaitGroup, c chan *batch) {
 
 	for batch := range c {
 		start := time.Now()
-		rows, err := db.CopyFromLines(dbx, batch.rows, copyCmd, useSplitChar)
+		rows, err := db.CopyFromLines(dbx, batch.rows, copyCmd)
 		if err != nil {
 			panic(err)
 		}
