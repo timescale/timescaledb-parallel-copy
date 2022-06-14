@@ -1,12 +1,13 @@
 package batch_test
 
 import (
-	"bufio"
+	"bytes"
 	"errors"
+	"io"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
-	"testing/iotest"
 
 	"github.com/timescale/timescaledb-parallel-copy/internal/batch"
 )
@@ -18,7 +19,7 @@ func TestScan(t *testing.T) {
 		size     int
 		skip     int
 		limit    int64
-		expected [][]string
+		expected []string
 	}{
 		{
 			name: "basic split",
@@ -29,15 +30,9 @@ func TestScan(t *testing.T) {
 				"7,8,9",
 			},
 			size: 2,
-			expected: [][]string{
-				{
-					"a,b,c",
-					"1,2,3",
-				},
-				{
-					"4,5,6",
-					"7,8,9",
-				},
+			expected: []string{
+				"a,b,c\n1,2,3\n",
+				"4,5,6\n7,8,9",
 			},
 		},
 		{
@@ -49,15 +44,9 @@ func TestScan(t *testing.T) {
 				"7,8,9",
 			},
 			size: 3,
-			expected: [][]string{
-				{
-					"a,b,c",
-					"1,2,3",
-					"4,5,6",
-				},
-				{
-					"7,8,9",
-				},
+			expected: []string{
+				"a,b,c\n1,2,3\n4,5,6\n",
+				"7,8,9",
 			},
 		},
 		{
@@ -71,14 +60,9 @@ func TestScan(t *testing.T) {
 			},
 			size: 2,
 			skip: 2,
-			expected: [][]string{
-				{
-					"1,2,3",
-					"4,5,6",
-				},
-				{
-					"7,8,9",
-				},
+			expected: []string{
+				"1,2,3\n4,5,6\n",
+				"7,8,9",
 			},
 		},
 		{
@@ -90,13 +74,9 @@ func TestScan(t *testing.T) {
 			},
 			size:  1,
 			limit: 2,
-			expected: [][]string{
-				{
-					"a,b,c",
-				},
-				{
-					"1,2,3",
-				},
+			expected: []string{
+				"a,b,c\n",
+				"1,2,3\n",
 			},
 		},
 		{
@@ -112,28 +92,72 @@ func TestScan(t *testing.T) {
 			size: 3,
 			skip: 2,
 		},
+		{
+			name: "long lines",
+			input: []string{
+				strings.Repeat("1111", 4096),
+				strings.Repeat("2222", 4096),
+				strings.Repeat("3333", 4096),
+				strings.Repeat("4444", 4096),
+			},
+			size: 2,
+			expected: []string{
+				strings.Repeat("1111", 4096) + "\n" + strings.Repeat("2222", 4096) + "\n",
+				strings.Repeat("3333", 4096) + "\n" + strings.Repeat("4444", 4096),
+			},
+		},
+		{
+			name: "long lines with limit",
+			input: []string{
+				strings.Repeat("1111", 4096),
+				strings.Repeat("2222", 4096),
+				strings.Repeat("3333", 4096),
+				strings.Repeat("4444", 4096),
+			},
+			size:  2,
+			limit: 3,
+			expected: []string{
+				strings.Repeat("1111", 4096) + "\n" + strings.Repeat("2222", 4096) + "\n",
+				strings.Repeat("3333", 4096) + "\n",
+			},
+		},
+		{
+			name: "long lines with header and limit",
+			input: []string{
+				strings.Repeat("1111", 4096),
+				strings.Repeat("2222", 4096),
+				strings.Repeat("3333", 4096),
+				strings.Repeat("4444", 4096),
+			},
+			size:  2,
+			skip:  1,
+			limit: 2,
+			expected: []string{
+				strings.Repeat("2222", 4096) + "\n" + strings.Repeat("3333", 4096) + "\n",
+			},
+		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			rowChan := make(chan *batch.Batch)
-			resultChan := make(chan [][]string)
+			rowChan := make(chan net.Buffers)
+			resultChan := make(chan []string)
 
 			// Collector for the scanned row batches.
 			go func() {
-				var actual [][]string
+				var actual []string
 
-				for b := range rowChan {
-					actual = append(actual, b.Rows)
+				for buf := range rowChan {
+					actual = append(actual, string(bytes.Join(buf, nil)))
 				}
 
 				resultChan <- actual
 			}()
 
 			all := strings.Join(c.input, "\n")
-			scanner := bufio.NewScanner(strings.NewReader(all))
+			reader := strings.NewReader(all)
 
-			err := batch.Scan(c.size, c.skip, c.limit, scanner, rowChan)
+			err := batch.Scan(c.size, c.skip, c.limit, reader, rowChan)
 			if err != nil {
 				t.Fatalf("Scan() returned error: %v", err)
 			}
@@ -150,27 +174,65 @@ func TestScan(t *testing.T) {
 		})
 	}
 
-	t.Run("scanner errors are bubbled up", func(t *testing.T) {
-		// iotest.TimeoutReader returns iotest.ErrTimeout on the second read.
-		scanner := bufio.NewScanner(
-			iotest.TimeoutReader(strings.NewReader(`
+	errCases := []struct {
+		name string
+		skip int
+	}{
+		{
+			name: "reader errors are bubbled up",
+			// no skip
+		},
+		{
+			name: "reader errors are bubbled up during header skips",
+			skip: 5,
+		},
+	}
+
+	for _, c := range errCases {
+		t.Run(c.name, func(t *testing.T) {
+			expected := errors.New("sentinel")
+			reader := newErrReader(strings.NewReader(`
 				some input
 				should be discarded
-			`)),
-		)
-		rowChan := make(chan *batch.Batch, 1)
+			`), expected)
 
-		err := batch.Scan(50, 0, 0, scanner, rowChan)
-		if !errors.Is(err, iotest.ErrTimeout) {
-			t.Errorf("Scan() returned unexpected error: %v", err)
-			t.Logf("want: %v", iotest.ErrTimeout)
-		}
+			rowChan := make(chan net.Buffers, 1)
 
-		// Make sure no batches were written to the channel; we shouldn't have
-		// had enough lines to fill one.
-		close(rowChan)
-		if len(rowChan) > 0 {
-			t.Errorf("Scan() buffered unexpected data: %v", (<-rowChan).Rows)
-		}
-	})
+			err := batch.Scan(50, c.skip, 0, reader, rowChan)
+			if !errors.Is(err, expected) {
+				t.Errorf("Scan() returned unexpected error: %v", err)
+				t.Logf("want: %v", expected)
+			}
+
+			// Make sure no batches were written to the channel; we shouldn't have
+			// had enough lines to fill one.
+			close(rowChan)
+			if len(rowChan) > 0 {
+				t.Errorf("Scan() buffered unexpected data: %v", <-rowChan)
+			}
+		})
+	}
+}
+
+// errReader is an io.Reader that returns an error on the second call to
+// Read(), _and_ on all future calls to Read(). (It is nearly identical to
+// iotest.TimeoutReader() except that the error is "sticky" and will never be
+// cleared on a future call.)
+type errReader struct {
+	r   io.Reader
+	err error
+}
+
+func newErrReader(r io.Reader, err error) *errReader {
+	return &errReader{r, err}
+}
+
+func (e *errReader) Read(buf []byte) (int, error) {
+	if e.r == nil {
+		return 0, e.err
+	}
+
+	n, err := e.r.Read(buf)
+	e.r = nil
+	return n, err
 }

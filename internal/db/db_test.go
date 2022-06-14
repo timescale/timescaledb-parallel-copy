@@ -1,9 +1,11 @@
 package db_test
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -150,7 +152,8 @@ func TestCopyFromLines(t *testing.T) {
 			defer d.MustExec(`DROP TABLE test`)
 
 			// Load the rows into it.
-			num, err := db.CopyFromLines(d, c.lines, c.copyCmd)
+			allLines := strings.Join(append(c.lines, ""), "\n")
+			num, err := db.CopyFromLines(d, strings.NewReader(allLines), c.copyCmd)
 			if err != nil {
 				t.Errorf("CopyFromLines() returned error: %v", err)
 			}
@@ -192,10 +195,10 @@ func TestCopyFromLines(t *testing.T) {
 
 		// Have plenty of data ready to write, to make sure that the internal
 		// pipes are correctly maintained during an error.
-		lines := make([]string, 10000)
+		lines := bytes.Repeat([]byte{'\n'}, 10000)
 		badCopy := `COPY BUT NOT REALLY`
 
-		num, err := db.CopyFromLines(d, lines, badCopy)
+		num, err := db.CopyFromLines(d, bytes.NewReader(lines), badCopy)
 		if num != 0 {
 			t.Errorf("CopyFromLines() reported %d new rows, want 0", num)
 		}
@@ -245,7 +248,8 @@ func TestCopyFromLines(t *testing.T) {
 			"02/01/2000 03:04:05",
 		}
 
-		_, err := db.CopyFromLines(d, lines, cmd)
+		lineData := strings.Join(append(lines, ""), "\n")
+		_, err := db.CopyFromLines(d, strings.NewReader(lineData), cmd)
 		if err != nil {
 			t.Fatalf("CopyFromLines() returned error: %v", err)
 		}

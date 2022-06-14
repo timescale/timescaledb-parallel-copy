@@ -2,10 +2,11 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"os"
 	"runtime"
 	"sync"
@@ -39,7 +40,6 @@ var (
 	skipHeader     bool
 	headerLinesCnt int
 
-	tokenSize       int
 	workers         int
 	limit           int64
 	batchSize       int
@@ -67,7 +67,6 @@ func init() {
 	flag.BoolVar(&skipHeader, "skip-header", false, "Skip the first line of the input")
 	flag.IntVar(&headerLinesCnt, "header-line-count", 1, "Number of header lines")
 
-	flag.IntVar(&tokenSize, "token-size", bufio.MaxScanTokenSize, "Maximum size to use for tokens. By default, this is 64KB, so any value less than that will be ignored")
 	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert")
 	flag.Int64Var(&limit, "limit", 0, "Number of rows to insert overall; 0 means to insert all")
 	flag.IntVar(&workers, "workers", 1, "Number of parallel requests to make")
@@ -110,7 +109,7 @@ func main() {
 		}
 	}
 
-	var scanner *bufio.Scanner
+	var reader io.Reader
 	if len(fromFile) > 0 {
 		file, err := os.Open(fromFile)
 		if err != nil {
@@ -118,21 +117,14 @@ func main() {
 		}
 		defer file.Close()
 
-		scanner = bufio.NewScanner(file)
+		reader = file
 	} else {
-		scanner = bufio.NewScanner(os.Stdin)
+		reader = os.Stdin
 	}
 
 	if headerLinesCnt <= 0 {
 		fmt.Printf("WARNING: provided --header-line-count (%d) must be greater than 0\n", headerLinesCnt)
 		os.Exit(1)
-	}
-
-	if tokenSize != 0 && tokenSize < bufio.MaxScanTokenSize {
-		fmt.Printf("WARNING: provided --token-size (%d) is smaller than default (%d), ignoring\n", tokenSize, bufio.MaxScanTokenSize)
-	} else if tokenSize > bufio.MaxScanTokenSize {
-		buf := make([]byte, tokenSize)
-		scanner.Buffer(buf, tokenSize)
 	}
 
 	var skip int
@@ -145,7 +137,7 @@ func main() {
 	}
 
 	var wg sync.WaitGroup
-	batchChan := make(chan *batch.Batch, workers*2)
+	batchChan := make(chan net.Buffers, workers*2)
 
 	// Generate COPY workers
 	for i := 0; i < workers; i++ {
@@ -159,7 +151,7 @@ func main() {
 	}
 
 	start := time.Now()
-	if err := batch.Scan(batchSize, skip, limit, scanner, batchChan); err != nil {
+	if err := batch.Scan(batchSize, skip, limit, reader, batchChan); err != nil {
 		log.Fatalf("Error reading input: %s", err.Error())
 	}
 
@@ -202,7 +194,7 @@ func report() {
 
 // processBatches reads batches from channel c and copies them to the target
 // server while tracking stats on the write.
-func processBatches(wg *sync.WaitGroup, c chan *batch.Batch) {
+func processBatches(wg *sync.WaitGroup, c chan net.Buffers) {
 	dbx, err := db.Connect(postgresConnect, overrides...)
 	if err != nil {
 		panic(err)
@@ -223,7 +215,7 @@ func processBatches(wg *sync.WaitGroup, c chan *batch.Batch) {
 
 	for batch := range c {
 		start := time.Now()
-		rows, err := db.CopyFromLines(dbx, batch.Rows, copyCmd)
+		rows, err := db.CopyFromLines(dbx, &batch, copyCmd)
 		if err != nil {
 			panic(err)
 		}

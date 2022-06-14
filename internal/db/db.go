@@ -153,49 +153,25 @@ func Connect(connStr string, overrides ...Overrideable) (*sqlx.DB, error) {
 	return db, nil
 }
 
-// CopyFromLines bulk-loads data using the given copyCmd. Returns the number of
-// rows inserted.
-func CopyFromLines(db *sqlx.DB, lines []string, copyCmd string) (int64, error) {
+// CopyFromLines bulk-loads data using the given copyCmd. lines must provide a
+// set of complete lines of CSV data, including the end-of-line delimiters.
+// Returns the number of rows inserted.
+func CopyFromLines(db *sqlx.DB, lines io.Reader, copyCmd string) (int64, error) {
 	conn, err := db.Conn(context.Background())
 	if err != nil {
 		return 0, fmt.Errorf("acquiring DB connection for COPY: %w", err)
 	}
 	defer conn.Close()
 
-	// Our slice of lines needs to be presented to PgConn.CopyFrom() as a
-	// unified io.Reader. Joining the entire string would eat memory, so use an
-	// intermediary io.Pipe instead.
-	//
-	// TODO: just take the bytes directly as an argument rather than converting
-	// to a slice and back
-	r, w := io.Pipe()
-	go func() {
-		defer w.Close()
-
-		for _, line := range lines {
-			if _, err := fmt.Fprintln(w, line); err != nil {
-				// If the pipe's not already closed with an error, add one for
-				// further debugging. In particular we want to ensure that the
-				// read half returns an error, so that the CopyFrom transaction
-				// doesn't commit below.
-				err = fmt.Errorf("writing to COPY pipe: %w", err)
-				w.CloseWithError(err)
-				return
-			}
-		}
-	}()
-
 	var rowCount int64
 
 	// pgx requires us to use the low-level API for a raw COPY FROM operation.
 	err = conn.Raw(func(driverConn interface{}) error {
-		defer r.Close()
-
 		// Unfortunately there are three layers to unwrap here: the stdlib.Conn,
 		// the pgx.Conn, and the pgconn.PgConn.
 		pg := driverConn.(*stdlib.Conn).Conn().PgConn()
 
-		result, err := pg.CopyFrom(context.Background(), r, copyCmd)
+		result, err := pg.CopyFrom(context.Background(), lines, copyCmd)
 		if err != nil {
 			return err
 		}
