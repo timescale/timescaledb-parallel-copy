@@ -14,6 +14,7 @@ import (
 
 	_ "github.com/jackc/pgx/v4/stdlib"
 
+	"github.com/timescale/timescaledb-parallel-copy/internal/batch"
 	"github.com/timescale/timescaledb-parallel-copy/internal/db"
 )
 
@@ -49,10 +50,6 @@ var (
 
 	rowCount int64
 )
-
-type batch struct {
-	rows []string
-}
 
 // Parse args
 func init() {
@@ -138,8 +135,17 @@ func main() {
 		scanner.Buffer(buf, tokenSize)
 	}
 
+	var skip int
+	if skipHeader {
+		skip = headerLinesCnt
+
+		if verbose {
+			fmt.Printf("Skipping the first %d lines of the input.\n", headerLinesCnt)
+		}
+	}
+
 	var wg sync.WaitGroup
-	batchChan := make(chan *batch, workers*2)
+	batchChan := make(chan *batch.Batch, workers*2)
 
 	// Generate COPY workers
 	for i := 0; i < workers; i++ {
@@ -153,7 +159,10 @@ func main() {
 	}
 
 	start := time.Now()
-	scan(batchSize, scanner, batchChan)
+	if err := batch.Scan(batchSize, skip, limit, scanner, batchChan); err != nil {
+		log.Fatalf("Error reading input: %s", err.Error())
+	}
+
 	close(batchChan)
 	wg.Wait()
 	end := time.Now()
@@ -191,49 +200,9 @@ func report() {
 
 }
 
-// scan reads lines from a bufio.Scanner, each which should be in CSV format
-// with a delimiter specified by --split (comma by default)
-func scan(itemsPerBatch int, scanner *bufio.Scanner, batchChan chan *batch) int64 {
-	rows := make([]string, 0, itemsPerBatch)
-	var linesRead int64
-
-	if skipHeader {
-		if verbose {
-			fmt.Printf("Skipping the first %d lines of the input.\n", headerLinesCnt)
-		}
-		for i := 0; i < headerLinesCnt; i++ {
-			scanner.Scan()
-		}
-	}
-
-	for scanner.Scan() {
-		if limit != 0 && linesRead >= limit {
-			break
-		}
-
-		rows = append(rows, scanner.Text())
-		if len(rows) >= itemsPerBatch { // dispatch to COPY worker & reset
-			batchChan <- &batch{rows}
-			rows = make([]string, 0, itemsPerBatch)
-		}
-		linesRead++
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatalf("Error reading input: %s", err.Error())
-	}
-
-	// Finished reading input, make sure last batch goes out.
-	if len(rows) > 0 {
-		batchChan <- &batch{rows}
-	}
-
-	return linesRead
-}
-
 // processBatches reads batches from channel c and copies them to the target
 // server while tracking stats on the write.
-func processBatches(wg *sync.WaitGroup, c chan *batch) {
+func processBatches(wg *sync.WaitGroup, c chan *batch.Batch) {
 	dbx, err := db.Connect(postgresConnect, overrides...)
 	if err != nil {
 		panic(err)
@@ -254,7 +223,7 @@ func processBatches(wg *sync.WaitGroup, c chan *batch) {
 
 	for batch := range c {
 		start := time.Now()
-		rows, err := db.CopyFromLines(dbx, batch.rows, copyCmd)
+		rows, err := db.CopyFromLines(dbx, batch.Rows, copyCmd)
 		if err != nil {
 			panic(err)
 		}
