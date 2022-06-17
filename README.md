@@ -5,7 +5,7 @@ PostgreSQL's built-in `COPY` functionality for bulk inserting data
 into [TimescaleDB.](//github.com/timescale/timescaledb/)
 
 ### Getting started
-You need the Go runtime (1.6+) installed, then simply `go get` this repo:
+You need the Go runtime (1.13+) installed, then simply `go get` this repo:
 ```bash
 $ go install github.com/timescale/timescaledb-parallel-copy/cmd/timescaledb-parallel-copy@latest
 ```
@@ -83,3 +83,16 @@ Usage of timescaledb-parallel-copy:
 
 ### Contributing
 We welcome contributions to this utility, which like TimescaleDB is released under the Apache2 Open Source License.  The same [Contributors Agreement](//github.com/timescale/timescaledb/blob/master/CONTRIBUTING.md) applies; please sign the [Contributor License Agreement](https://cla-assistant.io/timescale/timescaledb-parallel-copy) (CLA) if you're a new contributor.
+
+#### Running Tests
+
+Some of the tests require a running Postgres database. Set the `TEST_CONNINFO`
+environment variable to point at the database you want to run tests against.
+(Assume that the tests may be destructive; in particular it is not advisable to
+point the tests at any production database.)
+
+For example:
+```
+$ createdb gotest
+$ TEST_CONNINFO='dbname=gotest user=myuser' go test -v ./...
+```
