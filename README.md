@@ -69,8 +69,6 @@ Usage of timescaledb-parallel-copy:
         Character to split by (default ",")
   -table string
         Destination table for insertions (default "test_table")
-  -token-size int
-        Maximum size to use for tokens. By default, this is 64KB, so any value less than that will be ignored (default 65536)
   -truncate
         Truncate the destination table before insert
   -verbose
@@ -79,6 +77,7 @@ Usage of timescaledb-parallel-copy:
         Show the version of this tool
   -workers int
         Number of parallel requests to make (default 1)
+
 ```
 
 ### Purpose
