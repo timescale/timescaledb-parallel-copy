@@ -81,6 +81,17 @@ Usage of timescaledb-parallel-copy:
         Number of parallel requests to make (default 1)
 ```
 
+### Purpose
+
+PostgreSQL native `COPY` function is transactional and single-threaded, and may not be suitable for ingesting large
+amounts of data. Assuming the file is at least loosely chronologically ordered with respect to the hypertable's time
+dimension, this tool should give you great performance gains by parallelizing this operation, allowing users to take
+full advantage of their hardware.
+
+This tool also takes care to ingest data in a more efficient manner by roughly preserving the order of the rows. By
+taking a "round-robin" approach to sharing inserts between parallel workers, the database has to switch between chunks
+less often. This improves memory management and keeps operations on the disk as sequential as possible.
+
 ### Contributing
 We welcome contributions to this utility, which like TimescaleDB is released under the Apache2 Open Source License.  The same [Contributors Agreement](//github.com/timescale/timescaledb/blob/master/CONTRIBUTING.md) applies; please sign the [Contributor License Agreement](https://cla-assistant.io/timescale/timescaledb-parallel-copy) (CLA) if you're a new contributor.
 
