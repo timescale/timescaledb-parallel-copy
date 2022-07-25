@@ -3,6 +3,7 @@ package batch_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"reflect"
@@ -19,6 +20,8 @@ func TestScan(t *testing.T) {
 		size     int
 		skip     int
 		limit    int64
+		quote    rune // default '"'
+		escape   rune // default is c.quote
 		expected []string
 	}{
 		{
@@ -136,6 +139,101 @@ func TestScan(t *testing.T) {
 				strings.Repeat("2222", 4096) + "\n" + strings.Repeat("3333", 4096) + "\n",
 			},
 		},
+		{
+			name: "quoted multi-line rows",
+			input: []string{
+				// row 1
+				`a,b,"c`,
+				`d"`,
+				// row 2
+				`1,"2`,
+				`3",4`,
+				// row 3
+				`"5`,
+				`6",7,8`,
+				// row 4
+				`7,8,"9`,
+				`10"`,
+			},
+			size: 2,
+			expected: []string{
+				`a,b,"c
+d"
+1,"2
+3",4
+`,
+				`"5
+6",7,8
+7,8,"9
+10"`,
+			},
+		},
+		{
+			name: "quoted multi-line rows with skipped header lines",
+			input: []string{
+				// header row
+				`a,b,"c`,
+				`d"`,
+				// row 1
+				`1,"2`,
+				`3",4`,
+				// row 2
+				`"5`,
+				`6",7,8`,
+				// row 3
+				`7,8,"9`,
+				`10"`,
+			},
+			size: 2,
+			skip: 2, // note we skip header *lines*, not rows
+			expected: []string{
+				`1,"2
+3",4
+"5
+6",7,8
+`,
+				`7,8,"9
+10"`,
+			},
+		},
+		{
+			name:  "custom-quoted multi-line rows",
+			quote: '\'',
+			input: []string{
+				// row 1
+				`a,b,'c''`,
+				`d'`,
+				// row 2
+				`1,'2`,
+				`3',4`,
+			},
+			size: 2,
+			expected: []string{
+				`a,b,'c''
+d'
+1,'2
+3',4`,
+			},
+		},
+		{
+			name:   "custom-escaped multi-line rows",
+			escape: '\\',
+			input: []string{
+				// row 1
+				`a,b,"c\"`,
+				`d"`,
+				// row 2
+				`1,"2`,
+				`3",4`,
+			},
+			size: 2,
+			expected: []string{
+				`a,b,"c\"
+d"
+1,"2
+3",4`,
+			},
+		},
 	}
 
 	for _, c := range cases {
@@ -157,9 +255,11 @@ func TestScan(t *testing.T) {
 			all := strings.Join(c.input, "\n")
 			reader := strings.NewReader(all)
 			opts := batch.Options{
-				Size:  c.size,
-				Skip:  c.skip,
-				Limit: c.limit,
+				Size:   c.size,
+				Skip:   c.skip,
+				Limit:  c.limit,
+				Quote:  byte(c.quote),
+				Escape: byte(c.escape),
 			}
 
 			err := batch.Scan(reader, rowChan, opts)
@@ -173,8 +273,8 @@ func TestScan(t *testing.T) {
 
 			if !reflect.DeepEqual(actual, c.expected) {
 				t.Errorf("Scan() returned unexpected batch results")
-				t.Logf("got:\n%v", actual)
-				t.Logf("want:\n%v", c.expected)
+				t.Logf("got:\n%q", actual)
+				t.Logf("want:\n%q", c.expected)
 			}
 		})
 	}
@@ -299,20 +399,32 @@ func BenchmarkScan(b *testing.B) {
 		data := strings.Repeat(bm.line+"\n", opts.Size)
 		reader := strings.NewReader(data)
 
-		b.Run(bm.name, func(b *testing.B) {
-			// Make sure our output channel won't block. This relies on each
-			// call to Scan() producing exactly one batch.
-			rowChan := make(chan net.Buffers, b.N)
-			b.ResetTimer()
+		// Run each benchmark twice, once with standard ESCAPEs, and once with
+		// custom. (The implementations diverge enough to make it worth tracking
+		// both.)
+		escType := "standard"
 
-			for i := 0; i < b.N; i++ {
-				reader.Reset(data) // rewind to the beginning
+		for i := 0; i < 2; i++ {
+			name := fmt.Sprintf("%s (%s escapes)", bm.name, escType)
 
-				err := batch.Scan(reader, rowChan, opts)
-				if err != nil {
-					b.Errorf("Scan() returned unexpected error: %v", err)
+			b.Run(name, func(b *testing.B) {
+				// Make sure our output channel won't block. This relies on each
+				// call to Scan() producing exactly one batch.
+				rowChan := make(chan net.Buffers, b.N)
+				b.ResetTimer()
+
+				for i := 0; i < b.N; i++ {
+					reader.Reset(data) // rewind to the beginning
+
+					err := batch.Scan(reader, rowChan, opts)
+					if err != nil {
+						b.Errorf("Scan() returned unexpected error: %v", err)
+					}
 				}
-			}
-		})
+			})
+
+			escType = "custom"
+			opts.Escape = '\\'
+		}
 	}
 }
