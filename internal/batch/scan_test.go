@@ -245,3 +245,74 @@ func (e *errReader) Read(buf []byte) (int, error) {
 	e.r = nil
 	return n, err
 }
+
+func BenchmarkScan(b *testing.B) {
+	benchmarks := []struct {
+		name string
+		line string
+	}{
+		// All cases are patterned off of the gov.uk Price Paid Data schema:
+		//
+		//    https://www.gov.uk/guidance/about-the-price-paid-data
+		//
+		// but note that no actual personal data has been duplicated here; the
+		// entries are made up.
+		{
+			// Scan is complex enough that it appears we need to warm up the GC
+			// before we get stable results. Otherwise, the first benchmark runs
+			// artificially slowly.
+			name: "warmup (disregard)",
+			line: `---------------------------------------------------------------------------------------------------------------------------------`,
+		},
+		{
+			name: "no quotes",
+			line: `{5702803E-68CC-416B-BD04-2A6A04369690},1234567,2000-01-02 03:04,123 ABC,A,A,A,000,0,STREET,LOCALITY,TOWN/CITY,DISTRICT,COUNTY,Z,Y`,
+		},
+		{
+			name: "some quotes at the beginning",
+			line: `"{5702803E-68CC-416B-BD04-2A6A04369690}",1234567,2000-01-02 03:04,"123 ABC",A,A,A,000,0,STREET,LOCALITY,TOWN/CITY,DISTRICT,COUNTY,Z,Y`,
+		},
+		{
+			name: "some quotes in the middle",
+			line: `{5702803E-68CC-416B-BD04-2A6A04369690},1234567,2000-01-02 03:04,"123 ABC",A,A,A,000,0,STREET,LOCALITY,"TOWN OR CITY",DISTRICT,COUNTY,Z,Y`,
+		},
+		{
+			name: "all quotes",
+			line: `"{5702803E-68CC-416B-BD04-2A6A04369690}","1234567","2000-01-02 03:04","123 ABC","A","A","A","000","0","STREET","LOCALITY","TOWN/CITY","DISTRICT","COUNTY","Z","Y"`,
+		},
+		{
+			name: "nothing but quotes",
+			// This is basically the worst case for an IndexByte implementation.
+			// It's intended as a boundary for comparison, not as a case for us
+			// to actually optimize.
+			line: `"""""""""""""""""""""""""""""""""""","""""","""""""""""""","""""","","","","""","","""""","""""""","""""""","""""""","""""","",""`,
+		},
+	}
+
+	for _, bm := range benchmarks {
+		// Real-world cases need thousands of lines per batch to perform well.
+		// parallel-copy defaults to 5000, so that seems like a good number to
+		// start optimizing here.
+		opts := batch.Options{
+			Size: 5000,
+		}
+		data := strings.Repeat(bm.line+"\n", opts.Size)
+		reader := strings.NewReader(data)
+
+		b.Run(bm.name, func(b *testing.B) {
+			// Make sure our output channel won't block. This relies on each
+			// call to Scan() producing exactly one batch.
+			rowChan := make(chan net.Buffers, b.N)
+			b.ResetTimer()
+
+			for i := 0; i < b.N; i++ {
+				reader.Reset(data) // rewind to the beginning
+
+				err := batch.Scan(reader, rowChan, opts)
+				if err != nil {
+					b.Errorf("Scan() returned unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
