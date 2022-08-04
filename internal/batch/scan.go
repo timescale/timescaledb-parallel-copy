@@ -7,16 +7,24 @@ import (
 	"net"
 )
 
+// Options contains all the configurable knobs for Scan.
+type Options struct {
+	Size  int   // maximum number of rows per batch
+	Skip  int   // how many header lines to skip at the beginning
+	Limit int64 // total number of rows to scan after the header
+}
+
 // Scan reads all lines from an io.Reader, partitions them into net.Buffers with
-// size lines each, and writes each batch to the out channel. If skip is greater
-// than zero, that number of lines will be discarded from the beginning of the
-// data. If limit is greater than zero, then Scan will stop once it has written
-// that number of lines, across all batches, to the channel.
-func Scan(size, skip int, limit int64, r io.Reader, out chan<- net.Buffers) error {
+// opts.Size lines each, and writes each batch to the out channel. If opts.Skip
+// is greater than zero, that number of lines will be discarded from the
+// beginning of the data. If opts.Limit is greater than zero, then Scan will
+// stop once it has written that number of lines, across all batches, to the
+// channel.
+func Scan(r io.Reader, out chan<- net.Buffers, opts Options) error {
 	var linesRead int64
 	reader := bufio.NewReader(r)
 
-	for skip > 0 {
+	for skip := opts.Skip; skip > 0; {
 		// The use of ReadLine() here avoids copying or buffering data that
 		// we're just going to discard.
 		_, isPrefix, err := reader.ReadLine()
@@ -41,7 +49,7 @@ func Scan(size, skip int, limit int64, r io.Reader, out chan<- net.Buffers) erro
 	// Postgres connection divides the data into smaller CopyData chunks), keep
 	// the slices as-is and store them in net.Buffers, which is a convenient
 	// io.Reader abstraction wrapped over a [][]byte.
-	bufs := make(net.Buffers, 0, size)
+	bufs := make(net.Buffers, 0, opts.Size)
 	var bufferedLines int
 
 	for {
@@ -73,9 +81,9 @@ func Scan(size, skip int, limit int64, r io.Reader, out chan<- net.Buffers) erro
 			copy(buf, data)
 			bufs = append(bufs, buf)
 
-			if bufferedLines >= size { // dispatch to COPY worker & reset
+			if bufferedLines >= opts.Size { // dispatch to COPY worker & reset
 				out <- bufs
-				bufs = make(net.Buffers, 0, size)
+				bufs = make(net.Buffers, 0, opts.Size)
 				bufferedLines = 0
 			}
 		}
@@ -83,7 +91,7 @@ func Scan(size, skip int, limit int64, r io.Reader, out chan<- net.Buffers) erro
 		// Check termination conditions.
 		if err == io.EOF {
 			break
-		} else if limit != 0 && linesRead >= limit {
+		} else if opts.Limit != 0 && linesRead >= opts.Limit {
 			break
 		}
 	}

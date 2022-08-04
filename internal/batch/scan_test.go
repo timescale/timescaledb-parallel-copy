@@ -156,8 +156,13 @@ func TestScan(t *testing.T) {
 
 			all := strings.Join(c.input, "\n")
 			reader := strings.NewReader(all)
+			opts := batch.Options{
+				Size:  c.size,
+				Skip:  c.skip,
+				Limit: c.limit,
+			}
 
-			err := batch.Scan(c.size, c.skip, c.limit, reader, rowChan)
+			err := batch.Scan(reader, rowChan, opts)
 			if err != nil {
 				t.Fatalf("Scan() returned error: %v", err)
 			}
@@ -197,8 +202,12 @@ func TestScan(t *testing.T) {
 			`), expected)
 
 			rowChan := make(chan net.Buffers, 1)
+			opts := batch.Options{
+				Size: 50,
+				Skip: c.skip,
+			}
 
-			err := batch.Scan(50, c.skip, 0, reader, rowChan)
+			err := batch.Scan(reader, rowChan, opts)
 			if !errors.Is(err, expected) {
 				t.Errorf("Scan() returned unexpected error: %v", err)
 				t.Logf("want: %v", expected)

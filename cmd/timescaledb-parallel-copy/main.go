@@ -150,8 +150,14 @@ func main() {
 		go report()
 	}
 
+	opts := batch.Options{
+		Size:  batchSize,
+		Skip:  skip,
+		Limit: limit,
+	}
+
 	start := time.Now()
-	if err := batch.Scan(batchSize, skip, limit, reader, batchChan); err != nil {
+	if err := batch.Scan(reader, batchChan, opts); err != nil {
 		log.Fatalf("Error reading input: %s", err.Error())
 	}
 
