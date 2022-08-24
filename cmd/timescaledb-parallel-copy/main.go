@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,7 +22,7 @@ import (
 
 const (
 	binName    = "timescaledb-parallel-copy"
-	version    = "0.4.0"
+	version    = "0.4.1-dev"
 	tabCharStr = "\\t"
 )
 
@@ -33,8 +34,11 @@ var (
 	tableName       string
 	truncate        bool
 
-	copyOptions    string
-	splitCharacter string
+	copyOptions     string
+	splitCharacter  string
+	quoteCharacter  string
+	escapeCharacter string
+
 	fromFile       string
 	columns        string
 	skipHeader     bool
@@ -62,6 +66,8 @@ func init() {
 
 	flag.StringVar(&copyOptions, "copy-options", "CSV", "Additional options to pass to COPY (e.g., NULL 'NULL')")
 	flag.StringVar(&splitCharacter, "split", ",", "Character to split by")
+	flag.StringVar(&quoteCharacter, "quote", "", "The QUOTE `character` to use during COPY (default '\"')")
+	flag.StringVar(&escapeCharacter, "escape", "", "The ESCAPE `character` to use during COPY (default '\"')")
 	flag.StringVar(&fromFile, "file", "", "File to read from rather than stdin")
 	flag.StringVar(&columns, "columns", "", "Comma-separated columns present in CSV")
 	flag.BoolVar(&skipHeader, "skip-header", false, "Skip the first line of the input")
@@ -91,6 +97,16 @@ func main() {
 	if showVersion {
 		fmt.Printf("%s %s (%s %s)\n", binName, version, runtime.GOOS, runtime.GOARCH)
 		os.Exit(0)
+	}
+
+	if len(quoteCharacter) > 1 {
+		fmt.Println("ERROR: provided --quote must be a single-byte character")
+		os.Exit(1)
+	}
+
+	if len(escapeCharacter) > 1 {
+		fmt.Println("ERROR: provided --escape must be a single-byte character")
+		os.Exit(1)
 	}
 
 	if truncate { // Remove existing data from the table
@@ -150,8 +166,23 @@ func main() {
 		go report()
 	}
 
+	opts := batch.Options{
+		Size:  batchSize,
+		Skip:  skip,
+		Limit: limit,
+	}
+
+	if quoteCharacter != "" {
+		// we already verified the length above
+		opts.Quote = quoteCharacter[0]
+	}
+	if escapeCharacter != "" {
+		// we already verified the length above
+		opts.Escape = escapeCharacter[0]
+	}
+
 	start := time.Now()
-	if err := batch.Scan(batchSize, skip, limit, reader, batchChan); err != nil {
+	if err := batch.Scan(reader, batchChan, opts); err != nil {
 		log.Fatalf("Error reading input: %s", err.Error())
 	}
 
@@ -206,11 +237,21 @@ func processBatches(wg *sync.WaitGroup, c chan net.Buffers) {
 		delimStr = "E" + delimStr
 	}
 
+	var quotes string
+	if quoteCharacter != "" {
+		quotes = fmt.Sprintf("QUOTE '%s'",
+			strings.ReplaceAll(quoteCharacter, "'", "''"))
+	}
+	if escapeCharacter != "" {
+		quotes = fmt.Sprintf("%s ESCAPE '%s'",
+			quotes, strings.ReplaceAll(escapeCharacter, "'", "''"))
+	}
+
 	var copyCmd string
 	if columns != "" {
-		copyCmd = fmt.Sprintf("COPY %s(%s) FROM STDIN WITH DELIMITER %s %s", getFullTableName(), columns, delimStr, copyOptions)
+		copyCmd = fmt.Sprintf("COPY %s(%s) FROM STDIN WITH DELIMITER %s %s %s", getFullTableName(), columns, delimStr, quotes, copyOptions)
 	} else {
-		copyCmd = fmt.Sprintf("COPY %s FROM STDIN WITH DELIMITER %s %s", getFullTableName(), delimStr, copyOptions)
+		copyCmd = fmt.Sprintf("COPY %s FROM STDIN WITH DELIMITER %s %s %s", getFullTableName(), delimStr, quotes, copyOptions)
 	}
 
 	for batch := range c {

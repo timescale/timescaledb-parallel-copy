@@ -3,6 +3,7 @@ package batch_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"reflect"
@@ -19,6 +20,8 @@ func TestScan(t *testing.T) {
 		size     int
 		skip     int
 		limit    int64
+		quote    rune // default '"'
+		escape   rune // default is c.quote
 		expected []string
 	}{
 		{
@@ -136,6 +139,101 @@ func TestScan(t *testing.T) {
 				strings.Repeat("2222", 4096) + "\n" + strings.Repeat("3333", 4096) + "\n",
 			},
 		},
+		{
+			name: "quoted multi-line rows",
+			input: []string{
+				// row 1
+				`a,b,"c`,
+				`d"`,
+				// row 2
+				`1,"2`,
+				`3",4`,
+				// row 3
+				`"5`,
+				`6",7,8`,
+				// row 4
+				`7,8,"9`,
+				`10"`,
+			},
+			size: 2,
+			expected: []string{
+				`a,b,"c
+d"
+1,"2
+3",4
+`,
+				`"5
+6",7,8
+7,8,"9
+10"`,
+			},
+		},
+		{
+			name: "quoted multi-line rows with skipped header lines",
+			input: []string{
+				// header row
+				`a,b,"c`,
+				`d"`,
+				// row 1
+				`1,"2`,
+				`3",4`,
+				// row 2
+				`"5`,
+				`6",7,8`,
+				// row 3
+				`7,8,"9`,
+				`10"`,
+			},
+			size: 2,
+			skip: 2, // note we skip header *lines*, not rows
+			expected: []string{
+				`1,"2
+3",4
+"5
+6",7,8
+`,
+				`7,8,"9
+10"`,
+			},
+		},
+		{
+			name:  "custom-quoted multi-line rows",
+			quote: '\'',
+			input: []string{
+				// row 1
+				`a,b,'c''`,
+				`d'`,
+				// row 2
+				`1,'2`,
+				`3',4`,
+			},
+			size: 2,
+			expected: []string{
+				`a,b,'c''
+d'
+1,'2
+3',4`,
+			},
+		},
+		{
+			name:   "custom-escaped multi-line rows",
+			escape: '\\',
+			input: []string{
+				// row 1
+				`a,b,"c\"`,
+				`d"`,
+				// row 2
+				`1,"2`,
+				`3",4`,
+			},
+			size: 2,
+			expected: []string{
+				`a,b,"c\"
+d"
+1,"2
+3",4`,
+			},
+		},
 	}
 
 	for _, c := range cases {
@@ -156,8 +254,15 @@ func TestScan(t *testing.T) {
 
 			all := strings.Join(c.input, "\n")
 			reader := strings.NewReader(all)
+			opts := batch.Options{
+				Size:   c.size,
+				Skip:   c.skip,
+				Limit:  c.limit,
+				Quote:  byte(c.quote),
+				Escape: byte(c.escape),
+			}
 
-			err := batch.Scan(c.size, c.skip, c.limit, reader, rowChan)
+			err := batch.Scan(reader, rowChan, opts)
 			if err != nil {
 				t.Fatalf("Scan() returned error: %v", err)
 			}
@@ -168,8 +273,8 @@ func TestScan(t *testing.T) {
 
 			if !reflect.DeepEqual(actual, c.expected) {
 				t.Errorf("Scan() returned unexpected batch results")
-				t.Logf("got:\n%v", actual)
-				t.Logf("want:\n%v", c.expected)
+				t.Logf("got:\n%q", actual)
+				t.Logf("want:\n%q", c.expected)
 			}
 		})
 	}
@@ -197,8 +302,12 @@ func TestScan(t *testing.T) {
 			`), expected)
 
 			rowChan := make(chan net.Buffers, 1)
+			opts := batch.Options{
+				Size: 50,
+				Skip: c.skip,
+			}
 
-			err := batch.Scan(50, c.skip, 0, reader, rowChan)
+			err := batch.Scan(reader, rowChan, opts)
 			if !errors.Is(err, expected) {
 				t.Errorf("Scan() returned unexpected error: %v", err)
 				t.Logf("want: %v", expected)
@@ -235,4 +344,87 @@ func (e *errReader) Read(buf []byte) (int, error) {
 	n, err := e.r.Read(buf)
 	e.r = nil
 	return n, err
+}
+
+func BenchmarkScan(b *testing.B) {
+	benchmarks := []struct {
+		name string
+		line string
+	}{
+		// All cases are patterned off of the gov.uk Price Paid Data schema:
+		//
+		//    https://www.gov.uk/guidance/about-the-price-paid-data
+		//
+		// but note that no actual personal data has been duplicated here; the
+		// entries are made up.
+		{
+			// Scan is complex enough that it appears we need to warm up the GC
+			// before we get stable results. Otherwise, the first benchmark runs
+			// artificially slowly.
+			name: "warmup (disregard)",
+			line: `---------------------------------------------------------------------------------------------------------------------------------`,
+		},
+		{
+			name: "no quotes",
+			line: `{5702803E-68CC-416B-BD04-2A6A04369690},1234567,2000-01-02 03:04,123 ABC,A,A,A,000,0,STREET,LOCALITY,TOWN/CITY,DISTRICT,COUNTY,Z,Y`,
+		},
+		{
+			name: "some quotes at the beginning",
+			line: `"{5702803E-68CC-416B-BD04-2A6A04369690}",1234567,2000-01-02 03:04,"123 ABC",A,A,A,000,0,STREET,LOCALITY,TOWN/CITY,DISTRICT,COUNTY,Z,Y`,
+		},
+		{
+			name: "some quotes in the middle",
+			line: `{5702803E-68CC-416B-BD04-2A6A04369690},1234567,2000-01-02 03:04,"123 ABC",A,A,A,000,0,STREET,LOCALITY,"TOWN OR CITY",DISTRICT,COUNTY,Z,Y`,
+		},
+		{
+			name: "all quotes",
+			line: `"{5702803E-68CC-416B-BD04-2A6A04369690}","1234567","2000-01-02 03:04","123 ABC","A","A","A","000","0","STREET","LOCALITY","TOWN/CITY","DISTRICT","COUNTY","Z","Y"`,
+		},
+		{
+			name: "nothing but quotes",
+			// This is basically the worst case for an IndexByte implementation.
+			// It's intended as a boundary for comparison, not as a case for us
+			// to actually optimize.
+			line: `"""""""""""""""""""""""""""""""""""","""""","""""""""""""","""""","","","","""","","""""","""""""","""""""","""""""","""""","",""`,
+		},
+	}
+
+	for _, bm := range benchmarks {
+		// Real-world cases need thousands of lines per batch to perform well.
+		// parallel-copy defaults to 5000, so that seems like a good number to
+		// start optimizing here.
+		opts := batch.Options{
+			Size: 5000,
+		}
+		data := strings.Repeat(bm.line+"\n", opts.Size)
+		reader := strings.NewReader(data)
+
+		// Run each benchmark twice, once with standard ESCAPEs, and once with
+		// custom. (The implementations diverge enough to make it worth tracking
+		// both.)
+		escType := "standard"
+
+		for i := 0; i < 2; i++ {
+			name := fmt.Sprintf("%s (%s escapes)", bm.name, escType)
+
+			b.Run(name, func(b *testing.B) {
+				// Make sure our output channel won't block. This relies on each
+				// call to Scan() producing exactly one batch.
+				rowChan := make(chan net.Buffers, b.N)
+				b.ResetTimer()
+
+				for i := 0; i < b.N; i++ {
+					reader.Reset(data) // rewind to the beginning
+
+					err := batch.Scan(reader, rowChan, opts)
+					if err != nil {
+						b.Errorf("Scan() returned unexpected error: %v", err)
+					}
+				}
+			})
+
+			escType = "custom"
+			opts.Escape = '\\'
+		}
+	}
 }

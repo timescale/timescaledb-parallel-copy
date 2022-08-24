@@ -51,6 +51,8 @@ Usage of timescaledb-parallel-copy:
         Additional options to pass to COPY (e.g., NULL 'NULL') (default "CSV")
   -db-name string
         Database where the destination table exists
+  -escape character
+        The ESCAPE character to use during COPY (default '"')
   -file string
         File to read from rather than stdin
   -header-line-count int
@@ -59,6 +61,8 @@ Usage of timescaledb-parallel-copy:
         Number of rows to insert overall; 0 means to insert all
   -log-batches
         Whether to time individual batches.
+  -quote character
+        The QUOTE character to use during COPY (default '"')
   -reporting-period duration
         Period to report insert stats; if 0s, intermediate results will not be reported
   -schema string
