@@ -2,10 +2,11 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"os"
 	"runtime"
 	"strings"
@@ -13,14 +14,15 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
+	_ "github.com/jackc/pgx/v4/stdlib"
+
+	"github.com/timescale/timescaledb-parallel-copy/internal/batch"
 	"github.com/timescale/timescaledb-parallel-copy/internal/db"
 )
 
 const (
 	binName    = "timescaledb-parallel-copy"
-	version    = "0.3.0"
+	version    = "0.4.1-dev"
 	tabCharStr = "\\t"
 )
 
@@ -32,14 +34,16 @@ var (
 	tableName       string
 	truncate        bool
 
-	copyOptions    string
-	splitCharacter string
+	copyOptions     string
+	splitCharacter  string
+	quoteCharacter  string
+	escapeCharacter string
+
 	fromFile       string
 	columns        string
 	skipHeader     bool
 	headerLinesCnt int
 
-	tokenSize       int
 	workers         int
 	limit           int64
 	batchSize       int
@@ -50,10 +54,6 @@ var (
 
 	rowCount int64
 )
-
-type batch struct {
-	rows []string
-}
 
 // Parse args
 func init() {
@@ -66,12 +66,13 @@ func init() {
 
 	flag.StringVar(&copyOptions, "copy-options", "CSV", "Additional options to pass to COPY (e.g., NULL 'NULL')")
 	flag.StringVar(&splitCharacter, "split", ",", "Character to split by")
+	flag.StringVar(&quoteCharacter, "quote", "", "The QUOTE `character` to use during COPY (default '\"')")
+	flag.StringVar(&escapeCharacter, "escape", "", "The ESCAPE `character` to use during COPY (default '\"')")
 	flag.StringVar(&fromFile, "file", "", "File to read from rather than stdin")
 	flag.StringVar(&columns, "columns", "", "Comma-separated columns present in CSV")
 	flag.BoolVar(&skipHeader, "skip-header", false, "Skip the first line of the input")
 	flag.IntVar(&headerLinesCnt, "header-line-count", 1, "Number of header lines")
 
-	flag.IntVar(&tokenSize, "token-size", bufio.MaxScanTokenSize, "Maximum size to use for tokens. By default, this is 64KB, so any value less than that will be ignored")
 	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert")
 	flag.Int64Var(&limit, "limit", 0, "Number of rows to insert overall; 0 means to insert all")
 	flag.IntVar(&workers, "workers", 1, "Number of parallel requests to make")
@@ -98,6 +99,16 @@ func main() {
 		os.Exit(0)
 	}
 
+	if len(quoteCharacter) > 1 {
+		fmt.Println("ERROR: provided --quote must be a single-byte character")
+		os.Exit(1)
+	}
+
+	if len(escapeCharacter) > 1 {
+		fmt.Println("ERROR: provided --escape must be a single-byte character")
+		os.Exit(1)
+	}
+
 	if truncate { // Remove existing data from the table
 		dbx, err := db.Connect(postgresConnect, overrides...)
 		if err != nil {
@@ -114,7 +125,7 @@ func main() {
 		}
 	}
 
-	var scanner *bufio.Scanner
+	var reader io.Reader
 	if len(fromFile) > 0 {
 		file, err := os.Open(fromFile)
 		if err != nil {
@@ -122,9 +133,9 @@ func main() {
 		}
 		defer file.Close()
 
-		scanner = bufio.NewScanner(file)
+		reader = file
 	} else {
-		scanner = bufio.NewScanner(os.Stdin)
+		reader = os.Stdin
 	}
 
 	if headerLinesCnt <= 0 {
@@ -132,15 +143,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	if tokenSize != 0 && tokenSize < bufio.MaxScanTokenSize {
-		fmt.Printf("WARNING: provided --token-size (%d) is smaller than default (%d), ignoring\n", tokenSize, bufio.MaxScanTokenSize)
-	} else if tokenSize > bufio.MaxScanTokenSize {
-		buf := make([]byte, tokenSize)
-		scanner.Buffer(buf, tokenSize)
+	var skip int
+	if skipHeader {
+		skip = headerLinesCnt
+
+		if verbose {
+			fmt.Printf("Skipping the first %d lines of the input.\n", headerLinesCnt)
+		}
 	}
 
 	var wg sync.WaitGroup
-	batchChan := make(chan *batch, workers*2)
+	batchChan := make(chan net.Buffers, workers*2)
 
 	// Generate COPY workers
 	for i := 0; i < workers; i++ {
@@ -153,12 +166,32 @@ func main() {
 		go report()
 	}
 
+	opts := batch.Options{
+		Size:  batchSize,
+		Skip:  skip,
+		Limit: limit,
+	}
+
+	if quoteCharacter != "" {
+		// we already verified the length above
+		opts.Quote = quoteCharacter[0]
+	}
+	if escapeCharacter != "" {
+		// we already verified the length above
+		opts.Escape = escapeCharacter[0]
+	}
+
 	start := time.Now()
-	rowsRead := scan(batchSize, scanner, batchChan)
+	if err := batch.Scan(reader, batchChan, opts); err != nil {
+		log.Fatalf("Error reading input: %s", err.Error())
+	}
+
 	close(batchChan)
 	wg.Wait()
 	end := time.Now()
 	took := end.Sub(start)
+
+	rowsRead := atomic.LoadInt64(&rowCount)
 	rowRate := float64(rowsRead) / float64(took.Seconds())
 
 	res := fmt.Sprintf("COPY %d", rowsRead)
@@ -190,49 +223,9 @@ func report() {
 
 }
 
-// scan reads lines from a bufio.Scanner, each which should be in CSV format
-// with a delimiter specified by --split (comma by default)
-func scan(itemsPerBatch int, scanner *bufio.Scanner, batchChan chan *batch) int64 {
-	rows := make([]string, 0, itemsPerBatch)
-	var linesRead int64
-
-	if skipHeader {
-		if verbose {
-			fmt.Printf("Skipping the first %d lines of the input.\n", headerLinesCnt)
-		}
-		for i := 0; i < headerLinesCnt; i++ {
-			scanner.Scan()
-		}
-	}
-
-	for scanner.Scan() {
-		if limit != 0 && linesRead >= limit {
-			break
-		}
-
-		rows = append(rows, scanner.Text())
-		if len(rows) >= itemsPerBatch { // dispatch to COPY worker & reset
-			batchChan <- &batch{rows}
-			rows = make([]string, 0, itemsPerBatch)
-		}
-		linesRead++
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Fatalf("Error reading input: %s", err.Error())
-	}
-
-	// Finished reading input, make sure last batch goes out.
-	if len(rows) > 0 {
-		batchChan <- &batch{rows}
-	}
-
-	return linesRead
-}
-
 // processBatches reads batches from channel c and copies them to the target
 // server while tracking stats on the write.
-func processBatches(wg *sync.WaitGroup, c chan *batch) {
+func processBatches(wg *sync.WaitGroup, c chan net.Buffers) {
 	dbx, err := db.Connect(postgresConnect, overrides...)
 	if err != nil {
 		panic(err)
@@ -240,24 +233,30 @@ func processBatches(wg *sync.WaitGroup, c chan *batch) {
 	defer dbx.Close()
 
 	delimStr := "'" + splitCharacter + "'"
-	useSplitChar := splitCharacter
 	if splitCharacter == tabCharStr {
 		delimStr = "E" + delimStr
-		// Need to covert the string-ified version of the character to actual
-		// character for correct split
-		useSplitChar = "\t"
+	}
+
+	var quotes string
+	if quoteCharacter != "" {
+		quotes = fmt.Sprintf("QUOTE '%s'",
+			strings.ReplaceAll(quoteCharacter, "'", "''"))
+	}
+	if escapeCharacter != "" {
+		quotes = fmt.Sprintf("%s ESCAPE '%s'",
+			quotes, strings.ReplaceAll(escapeCharacter, "'", "''"))
 	}
 
 	var copyCmd string
 	if columns != "" {
-		copyCmd = fmt.Sprintf("COPY %s(%s) FROM STDIN WITH DELIMITER %s %s", getFullTableName(), columns, delimStr, copyOptions)
+		copyCmd = fmt.Sprintf("COPY %s(%s) FROM STDIN WITH DELIMITER %s %s %s", getFullTableName(), columns, delimStr, quotes, copyOptions)
 	} else {
-		copyCmd = fmt.Sprintf("COPY %s FROM STDIN WITH DELIMITER %s %s", getFullTableName(), delimStr, copyOptions)
+		copyCmd = fmt.Sprintf("COPY %s FROM STDIN WITH DELIMITER %s %s %s", getFullTableName(), delimStr, quotes, copyOptions)
 	}
 
 	for batch := range c {
 		start := time.Now()
-		rows, err := processBatch(dbx, batch, copyCmd, useSplitChar)
+		rows, err := db.CopyFromLines(dbx, &batch, copyCmd)
 		if err != nil {
 			panic(err)
 		}
@@ -269,45 +268,4 @@ func processBatches(wg *sync.WaitGroup, c chan *batch) {
 		}
 	}
 	wg.Done()
-}
-
-func processBatch(db *sqlx.DB, b *batch, copyCmd, splitChar string) (int64, error) {
-	tx, err := db.Begin()
-	if err != nil {
-		return 0, err
-	}
-
-	stmt, err := tx.Prepare(copyCmd)
-	if err != nil {
-		return 0, err
-	}
-
-	for _, line := range b.rows {
-		// For some reason this is only needed for tab splitting
-		if splitChar == "\t" {
-			sp := strings.Split(line, splitChar)
-			args := make([]interface{}, len(sp))
-			for i, v := range sp {
-				args[i] = v
-			}
-			_, err = stmt.Exec(args...)
-		} else {
-			_, err = stmt.Exec(line)
-		}
-
-		if err != nil {
-			return 0, err
-		}
-	}
-
-	err = stmt.Close()
-	if err != nil {
-		return 0, err
-	}
-
-	err = tx.Commit()
-	if err != nil {
-		return 0, err
-	}
-	return int64(len(b.rows)), nil
 }

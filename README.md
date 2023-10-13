@@ -5,9 +5,9 @@ PostgreSQL's built-in `COPY` functionality for bulk inserting data
 into [TimescaleDB.](//github.com/timescale/timescaledb/)
 
 ### Getting started
-You need the Go runtime (1.6+) installed, then simply `go get` this repo:
+You need the Go runtime (1.13+) installed, then simply `go get` this repo:
 ```bash
-$ go get github.com/timescale/timescaledb-parallel-copy/cmd/timescaledb-parallel-copy
+$ go install github.com/timescale/timescaledb-parallel-copy/cmd/timescaledb-parallel-copy@latest
 ```
 
 Before using this program to bulk insert data, your database should
@@ -51,6 +51,8 @@ Usage of timescaledb-parallel-copy:
         Additional options to pass to COPY (e.g., NULL 'NULL') (default "CSV")
   -db-name string
         Database where the destination table exists
+  -escape character
+        The ESCAPE character to use during COPY (default '"')
   -file string
         File to read from rather than stdin
   -header-line-count int
@@ -59,6 +61,8 @@ Usage of timescaledb-parallel-copy:
         Number of rows to insert overall; 0 means to insert all
   -log-batches
         Whether to time individual batches.
+  -quote character
+        The QUOTE character to use during COPY (default '"')
   -reporting-period duration
         Period to report insert stats; if 0s, intermediate results will not be reported
   -schema string
@@ -69,8 +73,6 @@ Usage of timescaledb-parallel-copy:
         Character to split by (default ",")
   -table string
         Destination table for insertions (default "test_table")
-  -token-size int
-        Maximum size to use for tokens. By default, this is 64KB, so any value less than that will be ignored (default 65536)
   -truncate
         Truncate the destination table before insert
   -verbose
@@ -79,7 +81,32 @@ Usage of timescaledb-parallel-copy:
         Show the version of this tool
   -workers int
         Number of parallel requests to make (default 1)
+
 ```
+
+### Purpose
+
+PostgreSQL native `COPY` function is transactional and single-threaded, and may not be suitable for ingesting large
+amounts of data. Assuming the file is at least loosely chronologically ordered with respect to the hypertable's time
+dimension, this tool should give you great performance gains by parallelizing this operation, allowing users to take
+full advantage of their hardware.
+
+This tool also takes care to ingest data in a more efficient manner by roughly preserving the order of the rows. By
+taking a "round-robin" approach to sharing inserts between parallel workers, the database has to switch between chunks
+less often. This improves memory management and keeps operations on the disk as sequential as possible.
 
 ### Contributing
 We welcome contributions to this utility, which like TimescaleDB is released under the Apache2 Open Source License.  The same [Contributors Agreement](//github.com/timescale/timescaledb/blob/master/CONTRIBUTING.md) applies; please sign the [Contributor License Agreement](https://cla-assistant.io/timescale/timescaledb-parallel-copy) (CLA) if you're a new contributor.
+
+#### Running Tests
+
+Some of the tests require a running Postgres database. Set the `TEST_CONNINFO`
+environment variable to point at the database you want to run tests against.
+(Assume that the tests may be destructive; in particular it is not advisable to
+point the tests at any production database.)
+
+For example:
+```
+$ createdb gotest
+$ TEST_CONNINFO='dbname=gotest user=myuser' go test -v ./...
+```
