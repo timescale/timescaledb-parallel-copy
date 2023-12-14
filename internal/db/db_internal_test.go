@@ -193,3 +193,32 @@ func TestDetermineTLS(t *testing.T) {
 		})
 	}
 }
+
+func TestDSN(t *testing.T) {
+	cases := []struct {
+		desc  string
+		input minimalConnConfig
+		want  string
+	}{
+		{
+			desc: "",
+			input: minimalConnConfig{
+				host:     "localhost",
+				port:     5432,
+				user:     "user",
+				password: "password",
+				db:       "db",
+				sslmode:  "prefer",
+			},
+			want: "host=localhost user=user password=password dbname=db port=5432 sslmode=prefer application_name=timescaledb-parallel-copy",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.desc, func(t *testing.T) {
+			got := c.input.DSN()
+			if c.want != got {
+				t.Errorf("wanted %s got %s", c.want, got)
+			}
+		})
+	}
+}

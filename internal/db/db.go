@@ -45,6 +45,7 @@ func (mcc *minimalConnConfig) DSN() string {
 		writeNonempty("port", strconv.FormatUint(uint64(mcc.port), 10))
 	}
 	writeNonempty("sslmode", mcc.sslmode)
+	writeNonempty("application_name", "timescaledb-parallel-copy")
 
 	return strings.TrimSpace(s.String())
 }
