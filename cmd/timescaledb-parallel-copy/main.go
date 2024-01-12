@@ -22,7 +22,7 @@ import (
 
 const (
 	binName    = "timescaledb-parallel-copy"
-	version    = "0.4.1-dev"
+	version    = "0.5.0"
 	tabCharStr = "\\t"
 )
 
@@ -220,7 +220,6 @@ func report() {
 		prevRowCount = rCount
 		prevTime = now
 	}
-
 }
 
 // processBatches reads batches from channel c and copies them to the target
