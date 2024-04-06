@@ -98,7 +98,6 @@ func parseConnStr(connStr string, overrides ...Overrideable) (*minimalConnConfig
 	}
 
 	return mcc, nil
-
 }
 
 // ErrInvalidSSLMode is the error when the provided SSL mode is not one of the
