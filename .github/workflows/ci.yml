@@ -1,0 +1,36 @@
+name: Go
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: "1.22"
+
+      - name: Check out code
+        uses: actions/checkout@v2
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v4
+        with:
+          version: v1.54
+
+      - name: Format
+        run: |
+          gofmt -l -s -w .
+
+      - name: Test
+        run: go test -v ./...
