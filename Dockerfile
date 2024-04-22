@@ -1,16 +1,19 @@
-FROM golang:1.19-alpine3.15 AS build 
+FROM golang:1.22-alpine3.19 AS base
 
-WORKDIR  /stage 
+WORKDIR /github.com/timescale/csv-importer
 
-COPY . . 
+COPY ./go.mod go.mod
+COPY ./go.sum go.sum
+RUN go mod download
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /stage/timescaledb-parallel-copy ./cmd/... 
+FROM base as builder
+COPY ./cmd cmd
+COPY ./internal internal
 
-FROM scratch 
+RUN go build -o /bin/timescaledb-parallel-copy ./cmd/timescaledb-parallel-copy
 
-WORKDIR /data
+FROM alpine:3.19 as release
 
-COPY --from=build /stage/timescaledb-parallel-copy /usr/bin/
+COPY --from=builder /bin/timescaledb-parallel-copy /bin/timescaledb-parallel-copy
 
 ENTRYPOINT [ "timescaledb-parallel-copy" ]
-
