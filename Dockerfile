@@ -9,6 +9,7 @@ RUN go mod download
 FROM base as builder
 COPY ./cmd cmd
 COPY ./internal internal
+COPY ./pkg pkg
 
 RUN go build -o /bin/timescaledb-parallel-copy ./cmd/timescaledb-parallel-copy
 
