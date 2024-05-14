@@ -1,20 +1,147 @@
-## timescaledb-parallel-copy
+# timescaledb-parallel-copy
 
 `timescaledb-parallel-copy` is a command line program for parallelizing
 PostgreSQL's built-in `COPY` functionality for bulk inserting data
 into [TimescaleDB.](//github.com/timescale/timescaledb/)
 
-### Getting started
-You need the Go runtime (1.13+) installed, then simply `go get` this repo:
-```bash
-$ go install github.com/timescale/timescaledb-parallel-copy/cmd/timescaledb-parallel-copy@latest
+## Installation
+
+### Docker
+
+```sh
+docker pull timescale/timescaledb-parallel-copy
 ```
+
+### Go
+
+You need the Go runtime (1.13+) installed, then simply `go get` this repo:
+
+```sh
+go install github.com/timescale/timescaledb-parallel-copy/cmd/timescaledb-parallel-copy@latest
+```
+
+### Brew
+
+-   Add the TimescaleDB Homebrew tap.
+
+```sh
+brew tap timescale/tap
+```
+
+-   Install timescaledb-parallel-copy.
+
+```sh
+brew install timescaledb-tools
+```
+
+### Debian
+
+-   Install packages needed for the installation.
+
+```sh
+sudo apt install gnupg lsb-release wget
+```
+
+-   Add the TimescaleDB repository.
+
+```sh
+echo "deb https://packagecloud.io/timescale/timescaledb/debian/ $(lsb_release -c -s) main" | sudo tee /etc/apt/sources.list.d/timescaledb.list
+```
+
+-   Install the TimescaleDB GPG key.
+
+```sh
+wget --quiet -O - https://packagecloud.io/timescale/timescaledb/gpgkey | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/timescaledb.gpg
+```
+
+-   Install the tools package which contains `timescaledb-parallel-copy`.
+
+```sh
+sudo apt install timescaledb-tools
+```
+
+### Ubuntu
+
+-   Install packages needed for the installation.
+
+```sh
+sudo apt install gnupg lsb-release wget
+```
+
+-   Add the TimescaleDB repository.
+
+```sh
+echo "deb https://packagecloud.io/timescale/timescaledb/ubuntu/ $(lsb_release -c -s) main" | sudo tee /etc/apt/sources.list.d/timescaledb.list
+```
+
+-   Install the TimescaleDB GPG key.
+
+```sh
+wget --quiet -O - https://packagecloud.io/timescale/timescaledb/gpgkey | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/timescaledb.gpg
+```
+
+-   Install the tools package which contains `timescaledb-parallel-copy`.
+
+```sh
+sudo apt install timescaledb-tools
+```
+
+### RedHat
+
+-   Add the TimescaleDB repository.
+
+```sh
+sudo tee /etc/yum.repos.d/timescale_timescaledb.repo <<EOL
+[timescale_timescaledb]
+name=timescale_timescaledb
+baseurl=https://packagecloud.io/timescale/timescaledb/el/$(rpm -E %{rhel})/\$basearch
+repo_gpgcheck=1
+gpgcheck=0
+enabled=1
+gpgkey=https://packagecloud.io/timescale/timescaledb/gpgkey
+sslverify=1
+sslcacert=/etc/pki/tls/certs/ca-bundle.crt
+metadata_expire=300
+EOL
+```
+
+-   Install the tools package which contains `timescaledb-parallel-copy`.
+
+```sh
+sudo yum install timescaledb-tools
+```
+
+### Fedora
+
+-   Add the TimescaleDB repository.
+
+```sh
+sudo tee /etc/yum.repos.d/timescale_timescaledb.repo <<EOL
+[timescale_timescaledb]
+name=timescale_timescaledb
+baseurl=https://packagecloud.io/timescale/timescaledb/el/9/\$basearch
+repo_gpgcheck=1
+gpgcheck=0
+enabled=1
+gpgkey=https://packagecloud.io/timescale/timescaledb/gpgkey
+sslverify=1
+sslcacert=/etc/pki/tls/certs/ca-bundle.crt
+metadata_expire=300
+EOL
+```
+
+-   Install the tools package which contains `timescaledb-parallel-copy`.
+
+```sh
+sudo yum install timescaledb-tools
+```
+
+## Usage
 
 Before using this program to bulk insert data, your database should
 be installed with the TimescaleDB extension and the target table
 should already be made a hypertable.
 
-### Using timescaledb-parallel-copy
 If you want to bulk insert data from a file named `foo.csv` into a
 (hyper)table named `sample` in a database called `test`:
 
@@ -84,7 +211,7 @@ Usage of timescaledb-parallel-copy:
 
 ```
 
-### Purpose
+## Purpose
 
 PostgreSQL native `COPY` function is transactional and single-threaded, and may not be suitable for ingesting large
 amounts of data. Assuming the file is at least loosely chronologically ordered with respect to the hypertable's time
@@ -95,10 +222,11 @@ This tool also takes care to ingest data in a more efficient manner by roughly p
 taking a "round-robin" approach to sharing inserts between parallel workers, the database has to switch between chunks
 less often. This improves memory management and keeps operations on the disk as sequential as possible.
 
-### Contributing
-We welcome contributions to this utility, which like TimescaleDB is released under the Apache2 Open Source License.  The same [Contributors Agreement](//github.com/timescale/timescaledb/blob/master/CONTRIBUTING.md) applies; please sign the [Contributor License Agreement](https://cla-assistant.io/timescale/timescaledb-parallel-copy) (CLA) if you're a new contributor.
+## Contributing
 
-#### Running Tests
+We welcome contributions to this utility, which like TimescaleDB is released under the Apache2 Open Source License. The same [Contributors Agreement](//github.com/timescale/timescaledb/blob/master/CONTRIBUTING.md) applies; please sign the [Contributor License Agreement](https://cla-assistant.io/timescale/timescaledb-parallel-copy) (CLA) if you're a new contributor.
+
+### Running Tests
 
 Some of the tests require a running Postgres database. Set the `TEST_CONNINFO`
 environment variable to point at the database you want to run tests against.
@@ -106,6 +234,7 @@ environment variable to point at the database you want to run tests against.
 point the tests at any production database.)
 
 For example:
+
 ```
 $ createdb gotest
 $ TEST_CONNINFO='dbname=gotest user=myuser' go test -v ./...
