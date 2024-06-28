@@ -2,6 +2,7 @@ package batch_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -262,7 +263,7 @@ d"
 				Escape: byte(c.escape),
 			}
 
-			err := batch.Scan(reader, rowChan, opts)
+			err := batch.Scan(context.Background(), reader, rowChan, opts)
 			if err != nil {
 				t.Fatalf("Scan() returned error: %v", err)
 			}
@@ -307,7 +308,7 @@ d"
 				Skip: c.skip,
 			}
 
-			err := batch.Scan(reader, rowChan, opts)
+			err := batch.Scan(context.Background(), reader, rowChan, opts)
 			if !errors.Is(err, expected) {
 				t.Errorf("Scan() returned unexpected error: %v", err)
 				t.Logf("want: %v", expected)
@@ -416,7 +417,7 @@ func BenchmarkScan(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					reader.Reset(data) // rewind to the beginning
 
-					err := batch.Scan(reader, rowChan, opts)
+					err := batch.Scan(context.Background(), reader, rowChan, opts)
 					if err != nil {
 						b.Errorf("Scan() returned unexpected error: %v", err)
 					}
