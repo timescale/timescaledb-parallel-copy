@@ -2,6 +2,7 @@ package batch
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -27,7 +28,7 @@ type Options struct {
 // Scan expects the input to be in Postgres CSV format. Since this format allows
 // rows to be split over multiple lines, the caller may provide opts.Quote and
 // opts.Escape as the QUOTE and ESCAPE characters used for the CSV input.
-func Scan(r io.Reader, out chan<- net.Buffers, opts Options) error {
+func Scan(ctx context.Context, r io.Reader, out chan<- net.Buffers, opts Options) error {
 	var rowsRead int64
 	reader := bufio.NewReader(r)
 
@@ -110,6 +111,9 @@ func Scan(r io.Reader, out chan<- net.Buffers, opts Options) error {
 			}
 
 			if bufferedRows >= opts.Size { // dispatch to COPY worker & reset
+				if ctx.Err() != nil {
+					return nil
+				}
 				out <- bufs
 				bufs = make(net.Buffers, 0, opts.Size)
 				bufferedRows = 0

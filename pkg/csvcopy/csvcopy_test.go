@@ -72,7 +72,7 @@ func TestWriteDataToCSV(t *testing.T) {
 
 	reader, err := os.Open(tmpfile.Name())
 	require.NoError(t, err)
-	r, err := copier.Copy(reader)
+	r, err := copier.Copy(context.Background(), reader)
 	require.NoError(t, err)
 	require.NotNil(t, r)
 

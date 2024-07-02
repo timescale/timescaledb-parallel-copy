@@ -1,6 +1,7 @@
 package csvcopy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -152,19 +153,31 @@ func (c *Copier) Truncate() (err error) {
 	return err
 }
 
-func (c *Copier) Copy(reader io.Reader) (Result, error) {
+func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	var wg sync.WaitGroup
 	batchChan := make(chan net.Buffers, c.workers*2)
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errCh := make(chan error, c.workers+1)
 
 	// Generate COPY workers
 	for i := 0; i < c.workers; i++ {
 		wg.Add(1)
-		go c.processBatches(&wg, batchChan)
+		go func() {
+			defer wg.Done()
+			err := c.processBatches(ctx, batchChan)
+			if err != nil {
+				errCh <- err
+				cancel()
+			}
+		}()
+
 	}
 
 	// Reporting thread
 	if c.reportingPeriod > (0 * time.Second) {
-		go c.report()
+		go c.report(ctx)
 	}
 
 	opts := batch.Options{
@@ -183,12 +196,21 @@ func (c *Copier) Copy(reader io.Reader) (Result, error) {
 	}
 
 	start := time.Now()
-	if err := batch.Scan(reader, batchChan, opts); err != nil {
-		return Result{}, fmt.Errorf("failed reading input: %w", err)
-	}
-
-	close(batchChan)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := batch.Scan(ctx, reader, batchChan, opts); err != nil {
+			errCh <- fmt.Errorf("failed reading input: %w", err)
+			cancel()
+		}
+		close(batchChan)
+	}()
 	wg.Wait()
+	close(errCh)
+	// We are only interested on the first error message since all other errors
+	// must probably are related to the context being canceled.
+	err := <-errCh
+
 	end := time.Now()
 	took := end.Sub(start)
 
@@ -199,15 +221,15 @@ func (c *Copier) Copy(reader io.Reader) (Result, error) {
 		RowsRead: rowsRead,
 		Duration: took,
 		RowRate:  rowRate,
-	}, nil
+	}, err
 }
 
 // processBatches reads batches from channel c and copies them to the target
 // server while tracking stats on the write.
-func (c *Copier) processBatches(wg *sync.WaitGroup, ch chan net.Buffers) {
+func (c *Copier) processBatches(ctx context.Context, ch chan net.Buffers) (err error) {
 	dbx, err := db.Connect(c.dbURL, c.overrides...)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer dbx.Close()
 
@@ -233,46 +255,63 @@ func (c *Copier) processBatches(wg *sync.WaitGroup, ch chan net.Buffers) {
 		copyCmd = fmt.Sprintf("COPY %s FROM STDIN WITH DELIMITER %s %s %s", c.getFullTableName(), delimStr, quotes, c.copyOptions)
 	}
 
-	for batch := range ch {
-		start := time.Now()
-		rows, err := db.CopyFromLines(dbx, &batch, copyCmd)
-		if err != nil {
-			panic(err)
+	for {
+		if ctx.Err() != nil {
+			return nil
 		}
-		atomic.AddInt64(&c.rowCount, rows)
+		select {
+		case <-ctx.Done():
+			return nil
+		case batch, ok := <-ch:
+			if !ok {
+				return
+			}
+			start := time.Now()
+			rows, err := db.CopyFromLines(ctx, dbx, &batch, copyCmd)
+			if err != nil {
+				return err
+			}
+			atomic.AddInt64(&c.rowCount, rows)
 
-		if c.logBatches {
-			took := time.Since(start)
-			fmt.Printf("[BATCH] took %v, batch size %d, row rate %f/sec\n", took, c.batchSize, float64(c.batchSize)/float64(took.Seconds()))
+			if c.logBatches {
+				took := time.Since(start)
+				fmt.Printf("[BATCH] took %v, batch size %d, row rate %f/sec\n", took, c.batchSize, float64(c.batchSize)/float64(took.Seconds()))
+			}
 		}
 	}
-	wg.Done()
 }
 
 // report periodically prints the write rate in number of rows per second
-func (c *Copier) report() {
+func (c *Copier) report(ctx context.Context) {
 	start := time.Now()
 	prevTime := start
 	prevRowCount := int64(0)
+	ticker := time.NewTicker(c.reportingPeriod)
+	defer ticker.Stop()
 
-	for now := range time.NewTicker(c.reportingPeriod).C {
-		rCount := atomic.LoadInt64(&c.rowCount)
+	for {
+		select {
+		case now := <-ticker.C:
+			rCount := atomic.LoadInt64(&c.rowCount)
 
-		took := now.Sub(prevTime)
-		rowrate := float64(rCount-prevRowCount) / float64(took.Seconds())
-		overallRowrate := float64(rCount) / float64(now.Sub(start).Seconds())
-		totalTook := now.Sub(start)
+			took := now.Sub(prevTime)
+			rowrate := float64(rCount-prevRowCount) / float64(took.Seconds())
+			overallRowrate := float64(rCount) / float64(now.Sub(start).Seconds())
+			totalTook := now.Sub(start)
 
-		c.logger.Infof(
-			"at %v, row rate %0.2f/sec (period), row rate %0.2f/sec (overall), %E total rows",
-			totalTook-(totalTook%time.Second),
-			rowrate,
-			overallRowrate,
-			float64(rCount),
-		)
+			c.logger.Infof(
+				"at %v, row rate %0.2f/sec (period), row rate %0.2f/sec (overall), %E total rows",
+				totalTook-(totalTook%time.Second),
+				rowrate,
+				overallRowrate,
+				float64(rCount),
+			)
 
-		prevRowCount = rCount
-		prevTime = now
+			prevRowCount = rCount
+			prevTime = now
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"reflect"
@@ -153,7 +154,7 @@ func TestCopyFromLines(t *testing.T) {
 
 			// Load the rows into it.
 			allLines := strings.Join(append(c.lines, ""), "\n")
-			num, err := db.CopyFromLines(d, strings.NewReader(allLines), c.copyCmd)
+			num, err := db.CopyFromLines(context.Background(), d, strings.NewReader(allLines), c.copyCmd)
 			if err != nil {
 				t.Errorf("CopyFromLines() returned error: %v", err)
 			}
@@ -198,7 +199,7 @@ func TestCopyFromLines(t *testing.T) {
 		lines := bytes.Repeat([]byte{'\n'}, 10000)
 		badCopy := `COPY BUT NOT REALLY`
 
-		num, err := db.CopyFromLines(d, bytes.NewReader(lines), badCopy)
+		num, err := db.CopyFromLines(context.Background(), d, bytes.NewReader(lines), badCopy)
 		if num != 0 {
 			t.Errorf("CopyFromLines() reported %d new rows, want 0", num)
 		}
@@ -249,7 +250,7 @@ func TestCopyFromLines(t *testing.T) {
 		}
 
 		lineData := strings.Join(append(lines, ""), "\n")
-		_, err := db.CopyFromLines(d, strings.NewReader(lineData), cmd)
+		_, err := db.CopyFromLines(context.Background(), d, strings.NewReader(lineData), cmd)
 		if err != nil {
 			t.Fatalf("CopyFromLines() returned error: %v", err)
 		}

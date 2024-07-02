@@ -156,8 +156,8 @@ func Connect(connStr string, overrides ...Overrideable) (*sqlx.DB, error) {
 // CopyFromLines bulk-loads data using the given copyCmd. lines must provide a
 // set of complete lines of CSV data, including the end-of-line delimiters.
 // Returns the number of rows inserted.
-func CopyFromLines(db *sqlx.DB, lines io.Reader, copyCmd string) (int64, error) {
-	conn, err := db.Conn(context.Background())
+func CopyFromLines(ctx context.Context, db *sqlx.DB, lines io.Reader, copyCmd string) (int64, error) {
+	conn, err := db.Conn(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("acquiring DB connection for COPY: %w", err)
 	}
@@ -171,7 +171,7 @@ func CopyFromLines(db *sqlx.DB, lines io.Reader, copyCmd string) (int64, error) 
 		// the pgx.Conn, and the pgconn.PgConn.
 		pg := driverConn.(*stdlib.Conn).Conn().PgConn()
 
-		result, err := pg.CopyFrom(context.Background(), lines, copyCmd)
+		result, err := pg.CopyFrom(ctx, lines, copyCmd)
 		if err != nil {
 			return err
 		}

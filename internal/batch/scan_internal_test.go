@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -227,7 +228,7 @@ func TestCSVRowState(t *testing.T) {
 			allLines := strings.Join(c.input, "")
 			copyCmd := fmt.Sprintf(`COPY csv FROM STDIN WITH %s`, copyOpts)
 
-			num, err := db.CopyFromLines(d, strings.NewReader(allLines), copyCmd)
+			num, err := db.CopyFromLines(context.Background(), d, strings.NewReader(allLines), copyCmd)
 
 			if c.expectMore {
 				// If our test case claimed to be unterminated, then the DB
