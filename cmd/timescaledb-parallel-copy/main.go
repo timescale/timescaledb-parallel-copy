@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -132,7 +133,7 @@ func main() {
 		reader = os.Stdin
 	}
 
-	result, err := copier.Copy(reader)
+	result, err := copier.Copy(context.Background(), reader)
 	if err != nil {
 		log.Fatal("failed to copy CSV:", err)
 	}
