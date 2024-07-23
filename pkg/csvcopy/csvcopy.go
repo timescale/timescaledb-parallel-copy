@@ -301,7 +301,7 @@ func (c *Copier) report(ctx context.Context) {
 			totalTook := now.Sub(start)
 
 			c.logger.Infof(
-				"at %v, row rate %0.2f/sec (period), row rate %0.2f/sec (overall), %2.f total rows",
+				"at %v, row rate %0.2f/sec (period), row rate %0.2f/sec (overall), %0.2f total rows",
 				totalTook-(totalTook%time.Second),
 				rowrate,
 				overallRowrate,
