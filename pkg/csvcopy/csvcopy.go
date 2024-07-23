@@ -120,6 +120,7 @@ func NewCopier(
 		limit:           limit,
 		batchSize:       batchSize,
 		logBatches:      logBatches,
+		reportingPeriod: reportingPeriod,
 		verbose:         verbose,
 		skip:            skip,
 		logger:          &noopLogger{},
