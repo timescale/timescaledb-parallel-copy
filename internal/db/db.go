@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgconn"
-	"github.com/jackc/pgx/v4/stdlib"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -146,7 +146,7 @@ func Connect(connStr string, overrides ...Overrideable) (*sqlx.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not connect: %v", err)
 	}
-	db, err := sqlx.Connect("pgx", mcc.DSN())
+	db, err := sqlx.Connect("pgx/v5", mcc.DSN())
 	if err != nil {
 		return nil, fmt.Errorf("could not connect: %v", err)
 	}

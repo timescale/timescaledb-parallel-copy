@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jmoiron/sqlx"
 	"github.com/timescale/timescaledb-parallel-copy/internal/db"
 )
