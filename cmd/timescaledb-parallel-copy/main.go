@@ -16,7 +16,7 @@ import (
 
 const (
 	binName    = "timescaledb-parallel-copy"
-	version    = "0.5.1"
+	version    = "0.7.1"
 	tabCharStr = "\\t"
 )
 
