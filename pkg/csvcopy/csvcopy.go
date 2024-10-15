@@ -40,6 +40,8 @@ type Result struct {
 	RowRate  float64
 }
 
+var HeaderInCopyOptionsError = errors.New("'HEADER' in copyOptions")
+
 type Copier struct {
 	dbURL           string
 	overrides       []db.Overrideable
@@ -84,6 +86,10 @@ func NewCopier(
 	var overrides []db.Overrideable
 	if dbName != "" {
 		overrides = append(overrides, db.OverrideDBName(dbName))
+	}
+
+	if strings.Contains(strings.ToUpper(copyOptions), "HEADER") {
+		return nil, HeaderInCopyOptionsError
 	}
 
 	if len(quoteCharacter) > 1 {
