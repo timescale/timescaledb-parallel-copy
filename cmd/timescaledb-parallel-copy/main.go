@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -110,6 +111,9 @@ func main() {
 		csvcopy.WithLogger(&csvCopierLogger{}),
 	)
 	if err != nil {
+		if errors.Is(err, csvcopy.HeaderInCopyOptionsError) {
+			log.Fatalf("Error: 'HEADER' detected in -copy-options. If you were using 'HEADER' with PostgreSQL COPY, use: -skip-header")
+		}
 		log.Fatal(err)
 	}
 
