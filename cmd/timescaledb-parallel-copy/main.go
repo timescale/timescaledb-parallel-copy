@@ -116,7 +116,7 @@ func main() {
 	if truncate { // Remove existing data from the table
 		err = copier.Truncate()
 		if err != nil {
-			log.Printf("failed to trunctate table: %s", err)
+			log.Printf("failed to truncate table: %s", err)
 		}
 	}
 
