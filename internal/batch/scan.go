@@ -111,10 +111,11 @@ func Scan(ctx context.Context, r io.Reader, out chan<- net.Buffers, opts Options
 			}
 
 			if bufferedRows >= opts.Size { // dispatch to COPY worker & reset
-				if ctx.Err() != nil {
-					return nil
+				select {
+				case out <- bufs:
+				case <-ctx.Done():
+					return ctx.Err()
 				}
-				out <- bufs
 				bufs = make(net.Buffers, 0, opts.Size)
 				bufferedRows = 0
 			}
@@ -130,7 +131,11 @@ func Scan(ctx context.Context, r io.Reader, out chan<- net.Buffers, opts Options
 
 	// Finished reading input, make sure last batch goes out.
 	if len(bufs) > 0 {
-		out <- bufs
+		select {
+		case out <- bufs:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 
 	return nil
