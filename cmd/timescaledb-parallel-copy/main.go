@@ -139,7 +139,7 @@ func main() {
 
 	result, err := copier.Copy(context.Background(), reader)
 	if err != nil {
-		log.Fatal("failed to copy CSV:", err)
+		log.Fatal("failed to copy CSV: ", err)
 	}
 
 	res := fmt.Sprintf("COPY %d", result.RowsRead)

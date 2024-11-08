@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"reflect"
 	"strings"
 	"testing"
@@ -239,7 +238,7 @@ d"
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			rowChan := make(chan net.Buffers)
+			rowChan := make(chan batch.Batch)
 			resultChan := make(chan []string)
 
 			// Collector for the scanned row batches.
@@ -247,7 +246,7 @@ d"
 				var actual []string
 
 				for buf := range rowChan {
-					actual = append(actual, string(bytes.Join(buf, nil)))
+					actual = append(actual, string(bytes.Join(buf.Data, nil)))
 				}
 
 				resultChan <- actual
@@ -302,7 +301,7 @@ d"
 				should be discarded
 			`), expected)
 
-			rowChan := make(chan net.Buffers, 1)
+			rowChan := make(chan batch.Batch, 1)
 			opts := batch.Options{
 				Size: 50,
 				Skip: c.skip,
@@ -411,7 +410,7 @@ func BenchmarkScan(b *testing.B) {
 			b.Run(name, func(b *testing.B) {
 				// Make sure our output channel won't block. This relies on each
 				// call to Scan() producing exactly one batch.
-				rowChan := make(chan net.Buffers, b.N)
+				rowChan := make(chan batch.Batch, b.N)
 				b.ResetTimer()
 
 				for i := 0; i < b.N; i++ {
