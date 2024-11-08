@@ -48,7 +48,6 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 		// The use of ReadLine() here avoids copying or buffering data that
 		// we're just going to discard.
 		_, isPrefix, err := reader.ReadLine()
-		rowsRead++
 
 		if err == io.EOF {
 			// No data?
@@ -128,7 +127,7 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 				case out <- Batch{
 					Data: bufs,
 					Location: Location{
-						StartRow: rowsRead - int64(bufferedRows),
+						StartRow: rowsRead - int64(bufferedRows) + int64(opts.Skip),
 						Length:   bufferedRows,
 					},
 				}:
@@ -154,7 +153,7 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 		case out <- Batch{
 			Data: bufs,
 			Location: Location{
-				StartRow: rowsRead - int64(bufferedRows),
+				StartRow: rowsRead - int64(bufferedRows) + int64(opts.Skip),
 				Length:   bufferedRows,
 			},
 		}:
