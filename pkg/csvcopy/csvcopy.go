@@ -240,7 +240,7 @@ type ErrAtRow struct {
 func ErrAtRowFromPGError(pgerr *pgconn.PgError, offset int64) *ErrAtRow {
 	// Example of Where field
 	// "COPY metrics, line 1, column value: \"hello\""
-	match := regexp.MustCompile("line (\\d+)").FindStringSubmatch(pgerr.Where)
+	match := regexp.MustCompile(`line (\d+)`).FindStringSubmatch(pgerr.Where)
 	if len(match) != 2 {
 		return &ErrAtRow{
 			Err: pgerr,
