@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"strings"
 	"sync"
@@ -308,7 +307,7 @@ func (c *Copier) report(ctx context.Context) {
 	start := time.Now()
 	ticker := time.NewTicker(c.reportingPeriod)
 	defer ticker.Stop()
-	defer log.Println("Reporting stopped")
+
 	for {
 		select {
 		case now := <-ticker.C:
