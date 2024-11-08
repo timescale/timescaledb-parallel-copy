@@ -30,6 +30,13 @@ type Location struct {
 	Length   int
 }
 
+func NewLocation(rowsRead int64, bufferedRows int, skip int) Location {
+	return Location{
+		StartRow: rowsRead - int64(bufferedRows) + int64(skip),
+		Length:   bufferedRows,
+	}
+}
+
 // Scan reads all lines from an io.Reader, partitions them into net.Buffers with
 // opts.Size rows each, and writes each batch to the out channel. If opts.Skip
 // is greater than zero, that number of lines will be discarded from the
@@ -125,11 +132,8 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 			if bufferedRows >= opts.Size { // dispatch to COPY worker & reset
 				select {
 				case out <- Batch{
-					Data: bufs,
-					Location: Location{
-						StartRow: rowsRead - int64(bufferedRows) + int64(opts.Skip),
-						Length:   bufferedRows,
-					},
+					Data:     bufs,
+					Location: NewLocation(rowsRead, bufferedRows, opts.Skip),
 				}:
 				case <-ctx.Done():
 					return ctx.Err()
@@ -151,11 +155,8 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 	if len(bufs) > 0 {
 		select {
 		case out <- Batch{
-			Data: bufs,
-			Location: Location{
-				StartRow: rowsRead - int64(bufferedRows) + int64(opts.Skip),
-				Length:   bufferedRows,
-			},
+			Data:     bufs,
+			Location: NewLocation(rowsRead, bufferedRows, opts.Skip),
 		}:
 		case <-ctx.Done():
 			return ctx.Err()
