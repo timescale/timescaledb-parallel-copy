@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/jackc/pgconn"
 	_ "github.com/jackc/pgx/v4/stdlib"
 	"github.com/timescale/timescaledb-parallel-copy/internal/batch"
 	"github.com/timescale/timescaledb-parallel-copy/internal/db"
@@ -175,7 +177,7 @@ func (c *Copier) Truncate() (err error) {
 
 func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	var wg sync.WaitGroup
-	batchChan := make(chan net.Buffers, c.workers*2)
+	batchChan := make(chan batch.Batch, c.workers*2)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -245,9 +247,50 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	}, err
 }
 
+type ErrAtRow struct {
+	Err error
+	Row int64
+}
+
+func ErrAtRowFromPGError(pgerr *pgconn.PgError, offset int64) *ErrAtRow {
+	// Example of Where field
+	// "COPY metrics, line 1, column value: \"hello\""
+	match := regexp.MustCompile(`line (\d+)`).FindStringSubmatch(pgerr.Where)
+	if len(match) != 2 {
+		return &ErrAtRow{
+			Err: pgerr,
+			Row: -1,
+		}
+	}
+
+	line, err := strconv.Atoi(match[1])
+	if err != nil {
+		return &ErrAtRow{
+			Err: pgerr,
+			Row: -1,
+		}
+	}
+
+	return &ErrAtRow{
+		Err: pgerr,
+		Row: offset + int64(line),
+	}
+}
+
+func (e *ErrAtRow) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("at row %d, error %s", e.Row, e.Err.Error())
+	}
+	return fmt.Sprintf("error at row %d", e.Row)
+}
+
+func (e *ErrAtRow) Unwrap() error {
+	return e.Err
+}
+
 // processBatches reads batches from channel c and copies them to the target
 // server while tracking stats on the write.
-func (c *Copier) processBatches(ctx context.Context, ch chan net.Buffers) (err error) {
+func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err error) {
 	dbx, err := db.Connect(c.dbURL, c.overrides...)
 	if err != nil {
 		return err
@@ -288,15 +331,18 @@ func (c *Copier) processBatches(ctx context.Context, ch chan net.Buffers) (err e
 				return
 			}
 			start := time.Now()
-			rows, err := db.CopyFromLines(ctx, dbx, &batch, copyCmd)
+			rows, err := db.CopyFromLines(ctx, dbx, &batch.Data, copyCmd)
 			if err != nil {
-				return err
+				if pgerr, ok := err.(*pgconn.PgError); ok {
+					return ErrAtRowFromPGError(pgerr, batch.Location.StartRow)
+				}
+				return fmt.Errorf("[BATCH] starting at row %d: %w", batch.Location.StartRow, err)
 			}
 			atomic.AddInt64(&c.rowCount, rows)
 
 			if c.logBatches {
 				took := time.Since(start)
-				fmt.Printf("[BATCH] took %v, batch size %d, row rate %f/sec\n", took, c.batchSize, float64(c.batchSize)/float64(took.Seconds()))
+				fmt.Printf("[BATCH] starting at row %d, took %v, batch size %d, row rate %f/sec\n", batch.Location.StartRow, took, batch.Location.Length, float64(batch.Location.Length)/float64(took.Seconds()))
 			}
 		}
 	}

@@ -18,6 +18,25 @@ type Options struct {
 	Escape byte // the ESCAPE character; defaults to QUOTE
 }
 
+// Batch represents an operation to copy data into the DB
+type Batch struct {
+	Data     net.Buffers
+	Location Location
+}
+
+// Location positions a batch within the original data
+type Location struct {
+	StartRow int64
+	Length   int
+}
+
+func NewLocation(rowsRead int64, bufferedRows int, skip int) Location {
+	return Location{
+		StartRow: rowsRead - int64(bufferedRows) + int64(skip),
+		Length:   bufferedRows,
+	}
+}
+
 // Scan reads all lines from an io.Reader, partitions them into net.Buffers with
 // opts.Size rows each, and writes each batch to the out channel. If opts.Skip
 // is greater than zero, that number of lines will be discarded from the
@@ -28,7 +47,7 @@ type Options struct {
 // Scan expects the input to be in Postgres CSV format. Since this format allows
 // rows to be split over multiple lines, the caller may provide opts.Quote and
 // opts.Escape as the QUOTE and ESCAPE characters used for the CSV input.
-func Scan(ctx context.Context, r io.Reader, out chan<- net.Buffers, opts Options) error {
+func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) error {
 	var rowsRead int64
 	reader := bufio.NewReader(r)
 
@@ -112,7 +131,10 @@ func Scan(ctx context.Context, r io.Reader, out chan<- net.Buffers, opts Options
 
 			if bufferedRows >= opts.Size { // dispatch to COPY worker & reset
 				select {
-				case out <- bufs:
+				case out <- Batch{
+					Data:     bufs,
+					Location: NewLocation(rowsRead, bufferedRows, opts.Skip),
+				}:
 				case <-ctx.Done():
 					return ctx.Err()
 				}
@@ -132,7 +154,10 @@ func Scan(ctx context.Context, r io.Reader, out chan<- net.Buffers, opts Options
 	// Finished reading input, make sure last batch goes out.
 	if len(bufs) > 0 {
 		select {
-		case out <- bufs:
+		case out <- Batch{
+			Data:     bufs,
+			Location: NewLocation(rowsRead, bufferedRows, opts.Skip),
+		}:
 		case <-ctx.Done():
 			return ctx.Err()
 		}
