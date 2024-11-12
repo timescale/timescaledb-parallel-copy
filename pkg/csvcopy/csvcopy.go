@@ -34,6 +34,14 @@ func WithLogger(logger Logger) Option {
 	}
 }
 
+// WithReportingFunction sets the function that will be called at
+// reportingPeriod with information about the copy progress
+func WithReportingFunction(f ReportFunc) Option {
+	return func(c *Copier) {
+		c.reportingFunction = f
+	}
+}
+
 type Result struct {
 	RowsRead int64
 	Duration time.Duration
@@ -43,24 +51,25 @@ type Result struct {
 var HeaderInCopyOptionsError = errors.New("'HEADER' in copyOptions")
 
 type Copier struct {
-	dbURL           string
-	overrides       []db.Overrideable
-	schemaName      string
-	tableName       string
-	copyOptions     string
-	splitCharacter  string
-	quoteCharacter  string
-	escapeCharacter string
-	columns         string
-	workers         int
-	limit           int64
-	batchSize       int
-	logBatches      bool
-	reportingPeriod time.Duration
-	verbose         bool
-	skip            int
-	logger          Logger
-	rowCount        int64
+	dbURL             string
+	overrides         []db.Overrideable
+	schemaName        string
+	tableName         string
+	copyOptions       string
+	splitCharacter    string
+	quoteCharacter    string
+	escapeCharacter   string
+	columns           string
+	workers           int
+	limit             int64
+	batchSize         int
+	logBatches        bool
+	reportingPeriod   time.Duration
+	reportingFunction ReportFunc
+	verbose           bool
+	skip              int
+	logger            Logger
+	rowCount          int64
 }
 
 func NewCopier(
@@ -130,6 +139,7 @@ func NewCopier(
 		skip:            skip,
 		logger:          &noopLogger{},
 		rowCount:        0,
+		reportingPeriod: reportingPeriod,
 	}
 
 	for _, o := range options {
@@ -138,6 +148,10 @@ func NewCopier(
 
 	if skip > 0 && verbose {
 		copier.logger.Infof("Skipping the first %d lines of the input.", headerLinesCnt)
+	}
+
+	if copier.reportingFunction == nil {
+		copier.reportingFunction = DefaultReportFunc(copier.logger)
 	}
 
 	return copier, nil
@@ -183,6 +197,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 
 	// Reporting thread
 	if c.reportingPeriod > (0 * time.Second) {
+		c.logger.Infof("There will be reports every %s", c.reportingPeriod.String())
 		go c.report(ctx)
 	}
 
@@ -290,32 +305,25 @@ func (c *Copier) processBatches(ctx context.Context, ch chan net.Buffers) (err e
 // report periodically prints the write rate in number of rows per second
 func (c *Copier) report(ctx context.Context) {
 	start := time.Now()
-	prevTime := start
-	prevRowCount := int64(0)
 	ticker := time.NewTicker(c.reportingPeriod)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case now := <-ticker.C:
-			rCount := atomic.LoadInt64(&c.rowCount)
+			c.reportingFunction(Report{
+				Timestamp: now,
+				StartedAt: start,
+				RowCount:  c.GetRowCount(),
+			})
 
-			took := now.Sub(prevTime)
-			rowrate := float64(rCount-prevRowCount) / float64(took.Seconds())
-			overallRowrate := float64(rCount) / float64(now.Sub(start).Seconds())
-			totalTook := now.Sub(start)
-
-			c.logger.Infof(
-				"at %v, row rate %0.2f/sec (period), row rate %0.2f/sec (overall), %E total rows",
-				totalTook-(totalTook%time.Second),
-				rowrate,
-				overallRowrate,
-				float64(rCount),
-			)
-
-			prevRowCount = rCount
-			prevTime = now
 		case <-ctx.Done():
+			// Report one last time
+			c.reportingFunction(Report{
+				Timestamp: time.Now(),
+				StartedAt: start,
+				RowCount:  c.GetRowCount(),
+			})
 			return
 		}
 	}
