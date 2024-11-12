@@ -160,6 +160,7 @@ func TestErrorAtRow(t *testing.T) {
 	require.NoError(t, err)
 	_, err = copier.Copy(context.Background(), reader)
 	assert.Error(t, err)
-	assert.IsType(t, err, &ErrAtRow{})
-	assert.EqualValues(t, 4, err.(*ErrAtRow).Row)
+	errAtRow := &ErrAtRow{}
+	assert.ErrorAs(t, err, &errAtRow)
+	assert.EqualValues(t, 4, errAtRow.Row)
 }
