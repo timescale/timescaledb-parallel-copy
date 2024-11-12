@@ -20,7 +20,7 @@ func (r *Report) Rate() float64 {
 	return float64(r.RowCount) / float64(r.Timestamp.Sub(r.StartedAt).Seconds())
 }
 
-func (r *Report) RateSice(previous Report) float64 {
+func (r *Report) RateSince(previous Report) float64 {
 	return float64(r.RowCount-previous.RowCount) / float64(r.Timestamp.Sub(previous.Timestamp).Seconds())
 }
 
@@ -33,7 +33,7 @@ func DefaultReportFunc(logger Logger) ReportFunc {
 	p := message.NewPrinter(language.English)
 
 	return func(r Report) {
-		rowrate := r.RateSice(previous)
+		rowrate := r.RateSince(previous)
 		overallRowrate := r.Rate()
 		totalTook := r.Timestamp.Sub(r.StartedAt)
 
