@@ -200,7 +200,11 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	// Reporting thread
 	if c.reportingPeriod > (0 * time.Second) {
 		c.logger.Infof("There will be reports every %s", c.reportingPeriod.String())
-		go c.report(ctx)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.report(ctx)
+		}()
 	}
 
 	opts := batch.Options{
