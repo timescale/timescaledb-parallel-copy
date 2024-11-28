@@ -33,10 +33,11 @@ var (
 	quoteCharacter  string
 	escapeCharacter string
 
-	fromFile       string
-	columns        string
-	skipHeader     bool
-	headerLinesCnt int
+	fromFile            string
+	columns             string
+	skipHeader          bool
+	headerLinesCnt      int
+	batchErrorOutputDir string
 
 	workers         int
 	limit           int64
@@ -65,6 +66,7 @@ func init() {
 	flag.StringVar(&columns, "columns", "", "Comma-separated columns present in CSV")
 	flag.BoolVar(&skipHeader, "skip-header", false, "Skip the first line of the input")
 	flag.IntVar(&headerLinesCnt, "header-line-count", 1, "Number of header lines")
+	flag.StringVar(&batchErrorOutputDir, "batch-error-output-dir", "", "directory to store batch errors. Settings this will save a .csv file with the contents of the batch that failed and continue with the rest of the data.")
 
 	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert")
 	flag.Int64Var(&limit, "limit", 0, "Number of rows to insert overall; 0 means to insert all")
@@ -89,6 +91,12 @@ func main() {
 		fmt.Printf("%s %s (%s %s)\n", binName, version, runtime.GOOS, runtime.GOARCH)
 		os.Exit(0)
 	}
+	opts := []csvcopy.Option{}
+	opts = append(opts, csvcopy.WithLogger(&csvCopierLogger{}))
+	if batchErrorOutputDir != "" {
+		log.Printf("batch errors will be stored at %s", batchErrorOutputDir)
+		opts = append(opts, csvcopy.WithSkipFailedBatchDir(batchErrorOutputDir))
+	}
 
 	copier, err := csvcopy.NewCopier(
 		postgresConnect,
@@ -108,7 +116,7 @@ func main() {
 		logBatches,
 		reportingPeriod,
 		verbose,
-		csvcopy.WithLogger(&csvCopierLogger{}),
+		opts...,
 	)
 	if err != nil {
 		if errors.Is(err, csvcopy.HeaderInCopyOptionsError) {

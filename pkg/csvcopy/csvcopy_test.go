@@ -1,8 +1,10 @@
 package csvcopy
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
+	"io"
 	"os"
 	"testing"
 	"time"
@@ -162,4 +164,93 @@ func TestErrorAtRow(t *testing.T) {
 	assert.Error(t, err)
 	assert.IsType(t, err, &ErrAtRow{})
 	assert.EqualValues(t, 4, err.(*ErrAtRow).Row)
+}
+
+func TestSkipFailedBatch(t *testing.T) {
+	ctx := context.Background()
+
+	pgContainer, err := postgres.RunContainer(ctx,
+		testcontainers.WithImage("postgres:15.3-alpine"),
+		postgres.WithDatabase("test-db"),
+		postgres.WithUsername("postgres"),
+		postgres.WithPassword("postgres"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).WithStartupTimeout(5*time.Second)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		if err := pgContainer.Terminate(ctx); err != nil {
+			t.Fatalf("failed to terminate pgContainer: %s", err)
+		}
+	})
+
+	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	require.NoError(t, err)
+
+	conn, err := pgx.Connect(ctx, connStr)
+	require.NoError(t, err)
+	defer conn.Close(ctx)
+	_, err = conn.Exec(ctx, "create table public.metrics (device_id int, label text, value float8)")
+	require.NoError(t, err)
+
+	// Create a temporary CSV file
+	tmpfile, err := os.CreateTemp("", "example")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	// Write data to the CSV file
+	writer := csv.NewWriter(tmpfile)
+
+	data := [][]string{
+		{"42", "xasev", "4.2"},
+		{"24", "qased", "2.4"},
+		{"24", "qased", "2.4"},
+		{"24", "qased", "hello"},
+		{"24", "qased", "2.4"},
+		{"24", "qased", "2.4"},
+	}
+
+	for _, record := range data {
+		if err := writer.Write(record); err != nil {
+			t.Fatalf("Error writing record to CSV: %v", err)
+		}
+	}
+
+	writer.Flush()
+	fs := &MockWriteFS{}
+
+	copier, err := NewCopier(connStr, "test-db", "public", "metrics", "CSV", ",", "", "", "device_id,label,value", false, 1, 1, 0, 2, true, 0, false, WithSkipFailedBatch(fs))
+	require.NoError(t, err)
+	reader, err := os.Open(tmpfile.Name())
+	require.NoError(t, err)
+	result, err := copier.Copy(context.Background(), reader)
+	assert.Error(t, err)
+	assert.IsType(t, err, MultiError{})
+	assert.EqualValues(t, 4, result.RowsRead)
+	assert.Equal(t, "2.csv", err.(MultiError)[0].Path)
+	assert.EqualValues(t, 4, err.(MultiError)[0].Err.(*ErrAtRow).Row)
+
+	require.Contains(t, fs.Files, "2.csv")
+	assert.Equal(t, fs.Files["2.csv"].String(), "24,qased,2.4\n24,qased,hello\n")
+}
+
+type MockWriteFS struct {
+	Files map[string]*bytes.Buffer
+}
+type MockNoopCloserWriter struct {
+	*bytes.Buffer
+}
+
+func (MockNoopCloserWriter) Close() error { return nil }
+
+func (fs *MockWriteFS) CreateFile(name string) (io.WriteCloser, error) {
+	if fs.Files == nil {
+		fs.Files = make(map[string]*bytes.Buffer)
+	}
+	fs.Files[name] = &bytes.Buffer{}
+	return MockNoopCloserWriter{fs.Files[name]}, nil
 }

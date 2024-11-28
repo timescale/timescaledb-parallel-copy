@@ -22,6 +22,16 @@ type Options struct {
 type Batch struct {
 	Data     net.Buffers
 	Location Location
+	// Backup hold the same data as Data. It is used to rewind if something goes wrong
+	// Because it copies the slice, the memory is not duplicated
+	// Because Data is read only, the underlaying memory is not modified neither
+	Backup net.Buffers
+}
+
+func (b *Batch) BuildBackup() {
+	for _, d := range b.Data {
+		b.Backup = append(b.Backup, d)
+	}
 }
 
 // Location positions a batch within the original data

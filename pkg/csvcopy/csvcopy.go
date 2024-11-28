@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -44,6 +46,34 @@ func WithReportingFunction(f ReportFunc) Option {
 	}
 }
 
+type WriteFS interface {
+	CreateFile(name string) (io.WriteCloser, error)
+}
+
+// WithSkipFailedBatch sets a destination for the failed batches.
+// When a batch fails to be inserted, instead of failing the entire operation,
+// It will save the batch to the given location and proceed with the rest of the data.
+// This way, the batch can be analysed later and reimported once the issue is fixed.
+func WithSkipFailedBatch(destination WriteFS) Option {
+	return func(c *Copier) {
+		c.failedBatchDestination = destination
+	}
+}
+
+type OSWriteFS struct {
+	Root string
+}
+
+func (fs OSWriteFS) CreateFile(name string) (io.WriteCloser, error) {
+	return os.Create(path.Join(fs.Root, name))
+}
+
+func WithSkipFailedBatchDir(dir string) Option {
+	return func(c *Copier) {
+		c.failedBatchDestination = OSWriteFS{Root: dir}
+	}
+}
+
 type Result struct {
 	RowsRead int64
 	Duration time.Duration
@@ -72,6 +102,9 @@ type Copier struct {
 	skip              int
 	logger            Logger
 	rowCount          int64
+
+	failedBatchDestination WriteFS
+	failedBatchErrors      MultiError
 }
 
 func NewCopier(
@@ -175,23 +208,29 @@ func (c *Copier) Truncate() (err error) {
 	return err
 }
 
-func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
-	var wg sync.WaitGroup
+func (c *Copier) Copy(workerCtx context.Context, reader io.Reader) (Result, error) {
+	var workerWg sync.WaitGroup
+	var supportWg sync.WaitGroup
 	batchChan := make(chan batch.Batch, c.workers*2)
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	workerCtx, cancelWorkerCtx := context.WithCancel(workerCtx)
+	defer cancelWorkerCtx()
+
+	supportCtx, cancelSupportCtx := context.WithCancel(workerCtx)
+	defer cancelSupportCtx()
+
 	errCh := make(chan error, c.workers+1)
 
 	// Generate COPY workers
 	for i := 0; i < c.workers; i++ {
-		wg.Add(1)
+		workerWg.Add(1)
 		go func() {
-			defer wg.Done()
-			err := c.processBatches(ctx, batchChan)
+			defer workerWg.Done()
+			defer c.logger.Infof("worker finished")
+			err := c.processBatches(workerCtx, batchChan)
 			if err != nil {
 				errCh <- err
-				cancel()
+				cancelWorkerCtx()
 			}
 		}()
 
@@ -200,10 +239,11 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	// Reporting thread
 	if c.reportingPeriod > (0 * time.Second) {
 		c.logger.Infof("There will be reports every %s", c.reportingPeriod.String())
-		wg.Add(1)
+		supportWg.Add(1)
 		go func() {
-			defer wg.Done()
-			c.report(ctx)
+			defer c.logger.Infof("reporting stopped")
+			defer supportWg.Done()
+			c.report(supportCtx)
 		}()
 	}
 
@@ -223,16 +263,22 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	}
 
 	start := time.Now()
-	wg.Add(1)
+	workerWg.Add(1)
 	go func() {
-		defer wg.Done()
-		if err := batch.Scan(ctx, reader, batchChan, opts); err != nil {
+		defer workerWg.Done()
+		defer c.logger.Infof("scan done")
+		if err := batch.Scan(workerCtx, reader, batchChan, opts); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
-			cancel()
+			cancelWorkerCtx()
 		}
 		close(batchChan)
 	}()
-	wg.Wait()
+	c.logger.Infof("waiting for workers to complete")
+	workerWg.Wait()
+
+	c.logger.Infof("waiting for support tasks to complete")
+	cancelSupportCtx()
+	supportWg.Wait()
 	close(errCh)
 	// We are only interested on the first error message since all other errors
 	// must probably are related to the context being canceled.
@@ -244,11 +290,19 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	rowsRead := atomic.LoadInt64(&c.rowCount)
 	rowRate := float64(rowsRead) / float64(took.Seconds())
 
-	return Result{
+	result := Result{
 		RowsRead: rowsRead,
 		Duration: took,
 		RowRate:  rowRate,
-	}, err
+	}
+
+	if err != nil {
+		return result, err
+	}
+	if len(c.failedBatchErrors) > 0 {
+		return result, c.failedBatchErrors
+	}
+	return result, nil
 }
 
 type ErrAtRow struct {
@@ -334,13 +388,15 @@ func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err e
 			if !ok {
 				return
 			}
+			batch.BuildBackup()
+
 			start := time.Now()
 			rows, err := db.CopyFromLines(ctx, dbx, &batch.Data, copyCmd)
 			if err != nil {
-				if pgerr, ok := err.(*pgconn.PgError); ok {
-					return ErrAtRowFromPGError(pgerr, batch.Location.StartRow)
+				err = c.handleCopyError(batch, err)
+				if err != nil {
+					return err
 				}
-				return fmt.Errorf("[BATCH] starting at row %d: %w", batch.Location.StartRow, err)
 			}
 			atomic.AddInt64(&c.rowCount, rows)
 
@@ -350,6 +406,38 @@ func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err e
 			}
 		}
 	}
+}
+func (c *Copier) handleCopyError(batch batch.Batch, err error) error {
+	if pgerr, ok := err.(*pgconn.PgError); ok {
+		err = ErrAtRowFromPGError(pgerr, batch.Location.StartRow)
+	} else {
+		err = fmt.Errorf("[BATCH] starting at row %d: %w", batch.Location.StartRow, err)
+	}
+
+	return c.reportError(batch, err)
+}
+
+// reportError will attempt to handle and record the error if failedBatchDestination is set
+// otherwise, it just returns the same error to fail the execution
+func (c *Copier) reportError(batch batch.Batch, err error) error {
+	if c.failedBatchDestination == nil {
+		return err
+	}
+	path := fmt.Sprintf("%d.csv", batch.Location.StartRow)
+	c.logger.Infof("failed batch file name %s, %s", path, err.Error())
+
+	c.failedBatchErrors = append(c.failedBatchErrors, BatchError{Err: err, Path: path})
+
+	dst, err := c.failedBatchDestination.CreateFile(path)
+	if err != nil {
+		return fmt.Errorf("failed to create file to store batch error, %w", err)
+	}
+	defer dst.Close()
+	_, err = io.Copy(dst, &batch.Backup)
+	if err != nil {
+		return fmt.Errorf("failed to write file to store batch error, %w", err)
+	}
+	return nil
 }
 
 // report periodically prints the write rate in number of rows per second
