@@ -20,30 +20,6 @@ import (
 
 const TAB_CHAR_STR = "\\t"
 
-type Logger interface {
-	Infof(msg string, args ...interface{})
-}
-
-type noopLogger struct{}
-
-func (l *noopLogger) Infof(msg string, args ...interface{}) {}
-
-type Option func(c *Copier)
-
-func WithLogger(logger Logger) Option {
-	return func(c *Copier) {
-		c.logger = logger
-	}
-}
-
-// WithReportingFunction sets the function that will be called at
-// reportingPeriod with information about the copy progress
-func WithReportingFunction(f ReportFunc) Option {
-	return func(c *Copier) {
-		c.reportingFunction = f
-	}
-}
-
 type Result struct {
 	RowsRead int64
 	Duration time.Duration
@@ -53,8 +29,7 @@ type Result struct {
 var HeaderInCopyOptionsError = errors.New("'HEADER' in copyOptions")
 
 type Copier struct {
-	dbURL             string
-	overrides         []db.Overrideable
+	connString        string
 	schemaName        string
 	tableName         string
 	copyOptions       string
@@ -75,8 +50,7 @@ type Copier struct {
 }
 
 func NewCopier(
-	dbURL string,
-	dbName string,
+	connString string,
 	schemaName string,
 	tableName string,
 	copyOptions string,
@@ -94,11 +68,6 @@ func NewCopier(
 	verbose bool,
 	options ...Option,
 ) (*Copier, error) {
-	var overrides []db.Overrideable
-	if dbName != "" {
-		overrides = append(overrides, db.OverrideDBName(dbName))
-	}
-
 	if strings.Contains(strings.ToUpper(copyOptions), "HEADER") {
 		return nil, HeaderInCopyOptionsError
 	}
@@ -124,8 +93,7 @@ func NewCopier(
 	}
 
 	copier := &Copier{
-		dbURL:           dbURL,
-		overrides:       overrides,
+		connString:      connString,
 		schemaName:      schemaName,
 		tableName:       tableName,
 		copyOptions:     copyOptions,
@@ -160,7 +128,7 @@ func NewCopier(
 }
 
 func (c *Copier) Truncate() (err error) {
-	dbx, err := db.Connect(c.dbURL, c.overrides...)
+	dbx, err := db.Connect(c.connString)
 	if err != nil {
 		return fmt.Errorf("failed to connect to the database: %w", err)
 	}
@@ -295,7 +263,7 @@ func (e *ErrAtRow) Unwrap() error {
 // processBatches reads batches from channel c and copies them to the target
 // server while tracking stats on the write.
 func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err error) {
-	dbx, err := db.Connect(c.dbURL, c.overrides...)
+	dbx, err := db.Connect(c.connString)
 	if err != nil {
 		return err
 	}

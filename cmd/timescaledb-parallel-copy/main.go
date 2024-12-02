@@ -51,8 +51,10 @@ var (
 
 // Parse args
 func init() {
+	// Documented https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
 	flag.StringVar(&postgresConnect, "connection", "host=localhost user=postgres sslmode=disable", "PostgreSQL connection url")
-	flag.StringVar(&dbName, "db-name", "", "Database where the destination table exists")
+	// Deprecated, use connection
+	// flag.StringVar(&dbName, "db-name", "", "Database where the destination table exists")
 	flag.StringVar(&tableName, "table", "test_table", "Destination table for insertions")
 	flag.StringVar(&schemaName, "schema", "public", "Destination table's schema")
 	flag.BoolVar(&truncate, "truncate", false, "Truncate the destination table before insert")
@@ -92,7 +94,6 @@ func main() {
 
 	copier, err := csvcopy.NewCopier(
 		postgresConnect,
-		dbName,
 		schemaName,
 		tableName,
 		copyOptions,

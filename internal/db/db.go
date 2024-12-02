@@ -6,49 +6,10 @@ import (
 	"io"
 	"os"
 	"regexp"
-	"strconv"
-	"strings"
 
-	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4/stdlib"
 	"github.com/jmoiron/sqlx"
 )
-
-// minimalConnConfig is the minimal settings we need for connection. More
-// unusual options are currently not supported.
-type minimalConnConfig struct {
-	host     string
-	user     string
-	password string
-	db       string
-	port     uint16
-	sslmode  string
-}
-
-// DSN returns the PostgreSQL compatible DSN string that corresponds to mcc.
-// This is expressed as a string of <key>=<value> separated by spaces.
-func (mcc *minimalConnConfig) DSN() string {
-	var s strings.Builder
-	writeNonempty := func(key, val string) {
-		if val != "" {
-			_, err := s.WriteString(key + "=" + val + " ")
-			if err != nil {
-				panic(err)
-			}
-		}
-	}
-	writeNonempty("host", mcc.host)
-	writeNonempty("user", mcc.user)
-	writeNonempty("password", mcc.password)
-	writeNonempty("dbname", mcc.db)
-	if mcc.port != 0 {
-		writeNonempty("port", strconv.FormatUint(uint64(mcc.port), 10))
-	}
-	writeNonempty("sslmode", mcc.sslmode)
-	writeNonempty("application_name", "timescaledb-parallel-copy")
-
-	return strings.TrimSpace(s.String())
-}
 
 // Overrideable is an interface for defining ways to override PG settings
 // outside of the usual manners (through the connection string/URL or env vars).
@@ -64,40 +25,6 @@ type OverrideDBName string
 
 func (o OverrideDBName) Override() string {
 	return string(o)
-}
-
-// parseConnStr uses an external lib (that backs pgx) to take care of parsing
-// connection parameters for connecting to PostgreSQL. It handles the connStr
-// being in DSN or URL form, as well as reading env vars for additional settings.
-func parseConnStr(connStr string, overrides ...Overrideable) (*minimalConnConfig, error) {
-	config, err := pgconn.ParseConfig(connStr)
-	if err != nil {
-		return nil, err
-	}
-	sslmode, err := determineTLS(connStr)
-	if err != nil {
-		return nil, err
-	}
-
-	mcc := &minimalConnConfig{
-		host:     config.Host,
-		user:     config.User,
-		password: config.Password,
-		db:       config.Database,
-		port:     config.Port,
-		sslmode:  sslmode,
-	}
-
-	for _, o := range overrides {
-		switch o.(type) {
-		case OverrideDBName:
-			mcc.db = o.Override()
-		default:
-			return nil, fmt.Errorf("unknown overrideable: %T=%s", o, o.Override())
-		}
-	}
-
-	return mcc, nil
 }
 
 // ErrInvalidSSLMode is the error when the provided SSL mode is not one of the
@@ -141,12 +68,8 @@ func determineTLS(connStr string) (string, error) {
 
 // Connect returns a SQLX database corresponding to the provided connection
 // string/URL, env variables, and any provided overrides.
-func Connect(connStr string, overrides ...Overrideable) (*sqlx.DB, error) {
-	mcc, err := parseConnStr(connStr, overrides...)
-	if err != nil {
-		return nil, fmt.Errorf("could not connect: %v", err)
-	}
-	db, err := sqlx.Connect("pgx", mcc.DSN())
+func Connect(connStr string) (*sqlx.DB, error) {
+	db, err := sqlx.Connect("pgx", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("could not connect: %v", err)
 	}
