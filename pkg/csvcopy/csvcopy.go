@@ -30,19 +30,21 @@ type noopLogger struct{}
 
 func (l *noopLogger) Infof(msg string, args ...interface{}) {}
 
-type Option func(c *Copier)
+type Option func(c *Copier) error
 
 func WithLogger(logger Logger) Option {
-	return func(c *Copier) {
+	return func(c *Copier) error {
 		c.logger = logger
+		return nil
 	}
 }
 
 // WithReportingFunction sets the function that will be called at
 // reportingPeriod with information about the copy progress
 func WithReportingFunction(f ReportFunc) Option {
-	return func(c *Copier) {
+	return func(c *Copier) error {
 		c.reportingFunction = f
+		return nil
 	}
 }
 
@@ -55,8 +57,9 @@ type WriteFS interface {
 // It will save the batch to the given location and proceed with the rest of the data.
 // This way, the batch can be analysed later and reimported once the issue is fixed.
 func WithSkipFailedBatch(destination WriteFS) Option {
-	return func(c *Copier) {
+	return func(c *Copier) error {
 		c.failedBatchDestination = destination
+		return nil
 	}
 }
 
@@ -69,8 +72,13 @@ func (fs OSWriteFS) CreateFile(name string) (io.WriteCloser, error) {
 }
 
 func WithSkipFailedBatchDir(dir string) Option {
-	return func(c *Copier) {
+	return func(c *Copier) error {
+		err := os.MkdirAll(dir, os.ModePerm)
+		if err != nil {
+			return fmt.Errorf("failed to ensure directory exists: %w", err)
+		}
 		c.failedBatchDestination = OSWriteFS{Root: dir}
+		return nil
 	}
 }
 
@@ -178,7 +186,10 @@ func NewCopier(
 	}
 
 	for _, o := range options {
-		o(copier)
+		err := o(copier)
+		if err != nil {
+			return nil, fmt.Errorf("failed to execute option %T: %w", o, err)
+		}
 	}
 
 	if skip > 0 && verbose {
