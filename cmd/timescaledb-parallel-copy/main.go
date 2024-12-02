@@ -45,8 +45,6 @@ var (
 	reportingPeriod time.Duration
 	verbose         bool
 	showVersion     bool
-
-	dbName string
 )
 
 // Parse args
