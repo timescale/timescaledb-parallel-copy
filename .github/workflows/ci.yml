@@ -20,8 +20,8 @@ jobs:
       - name: Check out code
         uses: actions/checkout@v2
 
-      # - name: Install dependencies
-      #   run: go mod download
+      - name: Install dependencies
+        run: go mod download
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v4
