@@ -261,6 +261,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err e
 	} else {
 		copyCmd = fmt.Sprintf("COPY %s FROM STDIN WITH DELIMITER %s %s %s", c.getFullTableName(), delimStr, quotes, c.copyOptions)
 	}
+	c.logger.Infof("Copy command: %s", copyCmd)
 
 	for {
 		if ctx.Err() != nil {

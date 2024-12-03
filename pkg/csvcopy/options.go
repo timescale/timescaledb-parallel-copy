@@ -26,14 +26,18 @@ func WithLogger(logger Logger) Option {
 }
 
 // WithReportingFunction sets the function that will be called at
-// reportingPeriod with information about the copy progress
+// ReportingPeriod with information about the copy progress
 func WithReportingFunction(f ReportFunc) Option {
 	return func(c *Copier) error {
+		if c.reportingPeriod == 0 {
+			return fmt.Errorf("reporting period must be set before the reporting function")
+		}
 		c.reportingFunction = f
 		return nil
 	}
 }
 
+// WithReportingPeriod sets how often the reporting function will be called.
 func WithReportingPeriod(reportingPeriod time.Duration) Option {
 	return func(c *Copier) error {
 		if reportingPeriod <= 0 {
@@ -46,6 +50,8 @@ func WithReportingPeriod(reportingPeriod time.Duration) Option {
 
 var HeaderInCopyOptionsError = errors.New("'HEADER' in copyOptions")
 
+// WithCopyOptions appends the COPY options for the COPY operation.
+// By default is 'CSV'
 func WithCopyOptions(opt string) Option {
 	return func(c *Copier) error {
 		if strings.Contains(strings.ToUpper(opt), "HEADER") {
@@ -56,6 +62,7 @@ func WithCopyOptions(opt string) Option {
 	}
 }
 
+// WithSplitCharacter sets the COPY option DELIMITER
 func WithSplitCharacter(splitCharacter string) Option {
 	return func(c *Copier) error {
 		if len(splitCharacter) > 1 {
@@ -66,6 +73,7 @@ func WithSplitCharacter(splitCharacter string) Option {
 	}
 }
 
+// WithQuoteCharacter sets the COPY option QUOTE
 func WithQuoteCharacter(quoteCharacter string) Option {
 	return func(c *Copier) error {
 		if len(quoteCharacter) > 1 {
@@ -77,6 +85,7 @@ func WithQuoteCharacter(quoteCharacter string) Option {
 	}
 }
 
+// WithEscapeCharacter sets the COPY option ESCAPE
 func WithEscapeCharacter(escapeCharacter string) Option {
 	return func(c *Copier) error {
 		if len(escapeCharacter) > 1 {
@@ -88,6 +97,7 @@ func WithEscapeCharacter(escapeCharacter string) Option {
 	}
 }
 
+// WithColumns accepts a list of comma separated values for the csv columns
 func WithColumns(columns string) Option {
 	return func(c *Copier) error {
 		c.columns = columns
@@ -95,6 +105,7 @@ func WithColumns(columns string) Option {
 	}
 }
 
+// WithSkipHeader is set, skips the first row of the csv file
 func WithSkipHeader(skipHeader bool) Option {
 	return func(c *Copier) error {
 		if c.skip != 0 {
@@ -105,6 +116,7 @@ func WithSkipHeader(skipHeader bool) Option {
 	}
 }
 
+// WithSkipHeaderCount sets the number of lines to skip at the beginning of the file
 func WithSkipHeaderCount(headerLineCount int) Option {
 	return func(c *Copier) error {
 		if c.skip != 0 {
@@ -118,6 +130,7 @@ func WithSkipHeaderCount(headerLineCount int) Option {
 	}
 }
 
+// WithWorkers sets the number of workers to use while processing the file
 func WithWorkers(workers int) Option {
 	return func(c *Copier) error {
 		if workers <= 0 {
@@ -128,6 +141,7 @@ func WithWorkers(workers int) Option {
 	}
 }
 
+// WithLimit limits the number of imported rows
 func WithLimit(limit int64) Option {
 	return func(c *Copier) error {
 		if limit < 0 {
@@ -138,6 +152,7 @@ func WithLimit(limit int64) Option {
 	}
 }
 
+// WithBatchSize sets the rows processed on each batch
 func WithBatchSize(batchSize int) Option {
 	return func(c *Copier) error {
 		if batchSize < 0 {
@@ -148,6 +163,7 @@ func WithBatchSize(batchSize int) Option {
 	}
 }
 
+// WithLogBatches prints a line for every processed batch
 func WithLogBatches(logBatches bool) Option {
 	return func(c *Copier) error {
 		c.logBatches = logBatches
@@ -155,6 +171,7 @@ func WithLogBatches(logBatches bool) Option {
 	}
 }
 
+// WithVerbose enables logging
 func WithVerbose(verbose bool) Option {
 	return func(c *Copier) error {
 		c.verbose = verbose
@@ -162,6 +179,7 @@ func WithVerbose(verbose bool) Option {
 	}
 }
 
+// WithSchemaName sets the schema name
 func WithSchemaName(schema string) Option {
 	return func(c *Copier) error {
 		c.schemaName = schema
