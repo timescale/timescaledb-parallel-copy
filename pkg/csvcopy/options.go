@@ -64,3 +64,14 @@ func WithQuoteCharacter(quoteCharacter string) Option {
 		return nil
 	}
 }
+
+func WithEscapeCharacter(escapeCharacter string) Option {
+	return func(c *Copier) error {
+		if len(escapeCharacter) > 1 {
+			return errors.New("provided escape character must be a single-byte character")
+		}
+
+		c.escapeCharacter = escapeCharacter
+		return nil
+	}
+}

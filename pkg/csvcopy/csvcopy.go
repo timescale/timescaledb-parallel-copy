@@ -51,7 +51,6 @@ func NewCopier(
 	connString string,
 	schemaName string,
 	tableName string,
-	escapeCharacter string,
 	columns string,
 	skipHeader bool,
 	headerLinesCnt int,
@@ -63,10 +62,6 @@ func NewCopier(
 	verbose bool,
 	options ...Option,
 ) (*Copier, error) {
-	if len(escapeCharacter) > 1 {
-		return nil, errors.New("provided --escape must be a single-byte character")
-	}
-
 	if headerLinesCnt <= 0 {
 		return nil, fmt.Errorf(
 			"provided --header-line-count (%d) must be greater than 0\n",
@@ -83,7 +78,6 @@ func NewCopier(
 		connString:      connString,
 		schemaName:      schemaName,
 		tableName:       tableName,
-		escapeCharacter: escapeCharacter,
 		columns:         columns,
 		workers:         workers,
 		limit:           limit,
