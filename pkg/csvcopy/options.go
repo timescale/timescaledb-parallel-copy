@@ -82,3 +82,26 @@ func WithColumns(columns string) Option {
 		return nil
 	}
 }
+
+func WithSkipHeader(skipHeader bool) Option {
+	return func(c *Copier) error {
+		if c.skip != 0 {
+			return errors.New("skip is already set. Use SkipHeader or SkipHeaderCount")
+		}
+		c.skip = 1
+		return nil
+	}
+}
+
+func WithSkipHeaderCount(headerLineCount int) Option {
+	return func(c *Copier) error {
+		if c.skip != 0 {
+			return errors.New("skip is already set. Use SkipHeader or SkipHeaderCount")
+		}
+		if headerLineCount == 0 {
+			return errors.New("header line count must be greater than zero")
+		}
+		c.skip = headerLineCount
+		return nil
+	}
+}

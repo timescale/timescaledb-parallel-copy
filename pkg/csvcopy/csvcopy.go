@@ -51,8 +51,6 @@ func NewCopier(
 	connString string,
 	schemaName string,
 	tableName string,
-	skipHeader bool,
-	headerLinesCnt int,
 	workers int,
 	limit int64,
 	batchSize int,
@@ -61,18 +59,6 @@ func NewCopier(
 	verbose bool,
 	options ...Option,
 ) (*Copier, error) {
-	if headerLinesCnt <= 0 {
-		return nil, fmt.Errorf(
-			"provided --header-line-count (%d) must be greater than 0\n",
-			headerLinesCnt,
-		)
-	}
-
-	skip := 0
-	if skipHeader {
-		skip = headerLinesCnt
-	}
-
 	copier := &Copier{
 		connString:      connString,
 		schemaName:      schemaName,
@@ -82,7 +68,6 @@ func NewCopier(
 		batchSize:       batchSize,
 		logBatches:      logBatches,
 		verbose:         verbose,
-		skip:            skip,
 		logger:          &noopLogger{},
 		rowCount:        0,
 		reportingPeriod: reportingPeriod,
@@ -92,8 +77,8 @@ func NewCopier(
 		o(copier)
 	}
 
-	if skip > 0 && verbose {
-		copier.logger.Infof("Skipping the first %d lines of the input.", headerLinesCnt)
+	if copier.skip > 0 && verbose {
+		copier.logger.Infof("Skipping the first %d lines of the input.", copier.skip)
 	}
 
 	if copier.reportingFunction == nil {
