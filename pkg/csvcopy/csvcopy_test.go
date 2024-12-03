@@ -223,7 +223,7 @@ func TestWriteReportProgress(t *testing.T) {
 		require.LessOrEqual(t, r.RowCount, int64(2))
 	}
 
-	copier, err := NewCopier(connStr, "test-db", "public", "metrics", "CSV", ",", "", "", "device_id,label,value", false, 1, 1, 0, 5000, true, 100*time.Millisecond, false, WithReportingFunction(reportF))
+	copier, err := NewCopier(connStr, "public", "metrics", "CSV", ",", "", "", "device_id,label,value", false, 1, 1, 0, 5000, true, 100*time.Millisecond, false, WithReportingFunction(reportF))
 	require.NoError(t, err)
 
 	reader, err := os.Open(tmpfile.Name())
