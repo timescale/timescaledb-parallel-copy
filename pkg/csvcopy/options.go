@@ -75,3 +75,10 @@ func WithEscapeCharacter(escapeCharacter string) Option {
 		return nil
 	}
 }
+
+func WithColumns(columns string) Option {
+	return func(c *Copier) error {
+		c.columns = columns
+		return nil
+	}
+}
