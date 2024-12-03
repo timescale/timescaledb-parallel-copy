@@ -43,3 +43,13 @@ func WithCopyOptions(opt string) Option {
 		return nil
 	}
 }
+
+func WithSplitCharacter(splitCharacter string) Option {
+	return func(c *Copier) error {
+		if len(splitCharacter) != 1 {
+			return errors.New("split character must be a single-byte character")
+		}
+		c.splitCharacter = splitCharacter
+		return nil
+	}
+}
