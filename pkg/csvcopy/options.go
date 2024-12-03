@@ -125,3 +125,13 @@ func WithLimit(limit int64) Option {
 		return nil
 	}
 }
+
+func WithBatchSize(batchSize int) Option {
+	return func(c *Copier) error {
+		if batchSize < 0 {
+			return errors.New("batch size must be greater than zero")
+		}
+		c.batchSize = batchSize
+		return nil
+	}
+}
