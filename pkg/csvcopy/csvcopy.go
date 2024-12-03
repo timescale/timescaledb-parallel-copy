@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jackc/pgconn"
-	_ "github.com/jackc/pgx/v4/stdlib"
+	"github.com/jackc/pgx/v5/pgconn"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/timescale/timescaledb-parallel-copy/internal/batch"
 	"github.com/timescale/timescaledb-parallel-copy/internal/db"
 )
@@ -144,7 +144,7 @@ func (c *Copier) Truncate() (err error) {
 }
 
 func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
-	var wg sync.WaitGroup
+	var workerWg sync.WaitGroup
 	batchChan := make(chan batch.Batch, c.workers*2)
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -153,9 +153,9 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 
 	// Generate COPY workers
 	for i := 0; i < c.workers; i++ {
-		wg.Add(1)
+		workerWg.Add(1)
 		go func() {
-			defer wg.Done()
+			defer workerWg.Done()
 			err := c.processBatches(ctx, batchChan)
 			if err != nil {
 				errCh <- err
@@ -165,13 +165,16 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 
 	}
 
+	var supportWg sync.WaitGroup
+	supportCtx, cancelSupportCtx := context.WithCancel(ctx)
+	defer cancelSupportCtx()
 	// Reporting thread
 	if c.reportingPeriod > (0 * time.Second) {
 		c.logger.Infof("There will be reports every %s", c.reportingPeriod.String())
-		wg.Add(1)
+		supportWg.Add(1)
 		go func() {
-			defer wg.Done()
-			c.report(ctx)
+			defer supportWg.Done()
+			c.report(supportCtx)
 		}()
 	}
 
@@ -191,16 +194,18 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	}
 
 	start := time.Now()
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		if err := batch.Scan(ctx, reader, batchChan, opts); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
 			cancel()
 		}
 		close(batchChan)
 	}()
-	wg.Wait()
+	workerWg.Wait()
+
+	cancelSupportCtx()
+	supportWg.Wait()
+
 	close(errCh)
 	// We are only interested on the first error message since all other errors
 	// must probably are related to the context being canceled.
@@ -249,14 +254,14 @@ func ErrAtRowFromPGError(pgerr *pgconn.PgError, offset int64) *ErrAtRow {
 	}
 }
 
-func (e *ErrAtRow) Error() string {
+func (e ErrAtRow) Error() string {
 	if e.Err != nil {
 		return fmt.Sprintf("at row %d, error %s", e.Row, e.Err.Error())
 	}
 	return fmt.Sprintf("error at row %d", e.Row)
 }
 
-func (e *ErrAtRow) Unwrap() error {
+func (e ErrAtRow) Unwrap() error {
 	return e.Err
 }
 
@@ -305,8 +310,9 @@ func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err e
 			start := time.Now()
 			rows, err := db.CopyFromLines(ctx, dbx, &batch.Data, copyCmd)
 			if err != nil {
-				if pgerr, ok := err.(*pgconn.PgError); ok {
-					return ErrAtRowFromPGError(pgerr, batch.Location.StartRow)
+				pgErr := &pgconn.PgError{}
+				if errors.As(err, &pgErr) {
+					return ErrAtRowFromPGError(pgErr, batch.Location.StartRow)
 				}
 				return fmt.Errorf("[BATCH] starting at row %d: %w", batch.Location.StartRow, err)
 			}
