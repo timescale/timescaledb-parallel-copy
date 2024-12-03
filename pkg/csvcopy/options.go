@@ -154,3 +154,17 @@ func WithLogBatches(logBatches bool) Option {
 		return nil
 	}
 }
+
+func WithVerbose(verbose bool) Option {
+	return func(c *Copier) error {
+		c.verbose = verbose
+		return nil
+	}
+}
+
+func WithSchemaName(schema string) Option {
+	return func(c *Copier) error {
+		c.schemaName = schema
+		return nil
+	}
+}

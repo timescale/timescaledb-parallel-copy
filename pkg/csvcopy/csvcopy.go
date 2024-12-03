@@ -49,16 +49,12 @@ type Copier struct {
 
 func NewCopier(
 	connString string,
-	schemaName string,
 	tableName string,
-	verbose bool,
 	options ...Option,
 ) (*Copier, error) {
 	copier := &Copier{
 		connString: connString,
-		schemaName: schemaName,
 		tableName:  tableName,
-		verbose:    verbose,
 		logger:     &noopLogger{},
 		rowCount:   0,
 	}
@@ -67,7 +63,7 @@ func NewCopier(
 		o(copier)
 	}
 
-	if copier.skip > 0 && verbose {
+	if copier.skip > 0 && copier.verbose {
 		copier.logger.Infof("Skipping the first %d lines of the input.", copier.skip)
 	}
 
