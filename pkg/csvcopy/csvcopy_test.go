@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -160,6 +160,7 @@ func TestErrorAtRow(t *testing.T) {
 	require.NoError(t, err)
 	_, err = copier.Copy(context.Background(), reader)
 	assert.Error(t, err)
-	assert.IsType(t, err, &ErrAtRow{})
-	assert.EqualValues(t, 4, err.(*ErrAtRow).Row)
+	errAtRow := &ErrAtRow{}
+	assert.ErrorAs(t, err, &errAtRow)
+	assert.EqualValues(t, 4, errAtRow.Row)
 }
