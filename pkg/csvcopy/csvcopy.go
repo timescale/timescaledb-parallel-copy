@@ -26,8 +26,6 @@ type Result struct {
 	RowRate  float64
 }
 
-var HeaderInCopyOptionsError = errors.New("'HEADER' in copyOptions")
-
 type Copier struct {
 	connString        string
 	schemaName        string
@@ -53,7 +51,6 @@ func NewCopier(
 	connString string,
 	schemaName string,
 	tableName string,
-	copyOptions string,
 	splitCharacter string,
 	quoteCharacter string,
 	escapeCharacter string,
@@ -68,9 +65,6 @@ func NewCopier(
 	verbose bool,
 	options ...Option,
 ) (*Copier, error) {
-	if strings.Contains(strings.ToUpper(copyOptions), "HEADER") {
-		return nil, HeaderInCopyOptionsError
-	}
 
 	if len(quoteCharacter) > 1 {
 		return nil, errors.New("provided --quote must be a single-byte character")
@@ -96,7 +90,6 @@ func NewCopier(
 		connString:      connString,
 		schemaName:      schemaName,
 		tableName:       tableName,
-		copyOptions:     copyOptions,
 		splitCharacter:  splitCharacter,
 		quoteCharacter:  quoteCharacter,
 		escapeCharacter: escapeCharacter,
