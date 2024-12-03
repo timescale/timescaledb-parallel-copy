@@ -53,3 +53,14 @@ func WithSplitCharacter(splitCharacter string) Option {
 		return nil
 	}
 }
+
+func WithQuoteCharacter(quoteCharacter string) Option {
+	return func(c *Copier) error {
+		if len(quoteCharacter) != 1 {
+			return errors.New("quote character must be a single-byte character")
+		}
+
+		c.quoteCharacter = quoteCharacter
+		return nil
+	}
+}
