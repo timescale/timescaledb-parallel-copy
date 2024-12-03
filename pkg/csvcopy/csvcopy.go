@@ -51,18 +51,16 @@ func NewCopier(
 	connString string,
 	schemaName string,
 	tableName string,
-	reportingPeriod time.Duration,
 	verbose bool,
 	options ...Option,
 ) (*Copier, error) {
 	copier := &Copier{
-		connString:      connString,
-		schemaName:      schemaName,
-		tableName:       tableName,
-		verbose:         verbose,
-		logger:          &noopLogger{},
-		rowCount:        0,
-		reportingPeriod: reportingPeriod,
+		connString: connString,
+		schemaName: schemaName,
+		tableName:  tableName,
+		verbose:    verbose,
+		logger:     &noopLogger{},
+		rowCount:   0,
 	}
 
 	for _, o := range options {

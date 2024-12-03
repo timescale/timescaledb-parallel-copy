@@ -2,7 +2,9 @@ package csvcopy
 
 import (
 	"errors"
+	"fmt"
 	"strings"
+	"time"
 )
 
 type Option func(c *Copier) error
@@ -28,6 +30,16 @@ func WithLogger(logger Logger) Option {
 func WithReportingFunction(f ReportFunc) Option {
 	return func(c *Copier) error {
 		c.reportingFunction = f
+		return nil
+	}
+}
+
+func WithReportingPeriod(reportingPeriod time.Duration) Option {
+	return func(c *Copier) error {
+		if reportingPeriod <= 0 {
+			return fmt.Errorf("reporting period must be greater than zero")
+		}
+		c.reportingPeriod = reportingPeriod
 		return nil
 	}
 }
