@@ -115,3 +115,13 @@ func WithWorkers(workers int) Option {
 		return nil
 	}
 }
+
+func WithLimit(limit int64) Option {
+	return func(c *Copier) error {
+		if limit < 0 {
+			return errors.New("limit must be greater than zero")
+		}
+		c.limit = limit
+		return nil
+	}
+}
