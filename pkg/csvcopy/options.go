@@ -58,7 +58,7 @@ func WithCopyOptions(opt string) Option {
 
 func WithSplitCharacter(splitCharacter string) Option {
 	return func(c *Copier) error {
-		if len(splitCharacter) != 1 {
+		if len(splitCharacter) > 1 {
 			return errors.New("split character must be a single-byte character")
 		}
 		c.splitCharacter = splitCharacter
@@ -68,7 +68,7 @@ func WithSplitCharacter(splitCharacter string) Option {
 
 func WithQuoteCharacter(quoteCharacter string) Option {
 	return func(c *Copier) error {
-		if len(quoteCharacter) != 1 {
+		if len(quoteCharacter) > 1 {
 			return errors.New("quote character must be a single-byte character")
 		}
 

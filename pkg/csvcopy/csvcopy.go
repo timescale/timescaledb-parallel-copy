@@ -27,10 +27,13 @@ type Result struct {
 }
 
 type Copier struct {
-	connString        string
+	connString string
+	tableName  string
+
+	copyOptions string
+
 	schemaName        string
-	tableName         string
-	copyOptions       string
+	logger            Logger
 	splitCharacter    string
 	quoteCharacter    string
 	escapeCharacter   string
@@ -43,7 +46,6 @@ type Copier struct {
 	reportingFunction ReportFunc
 	verbose           bool
 	skip              int
-	logger            Logger
 	rowCount          int64
 }
 
@@ -55,8 +57,22 @@ func NewCopier(
 	copier := &Copier{
 		connString: connString,
 		tableName:  tableName,
-		logger:     &noopLogger{},
-		rowCount:   0,
+
+		// Defaults
+		schemaName:      "public",
+		logger:          &noopLogger{},
+		copyOptions:     "CSV",
+		splitCharacter:  ",",
+		quoteCharacter:  "",
+		escapeCharacter: "",
+		columns:         "",
+		workers:         1,
+		limit:           0,
+		batchSize:       5000,
+		logBatches:      false,
+		reportingPeriod: 0,
+		verbose:         false,
+		skip:            0,
 	}
 
 	for _, o := range options {
