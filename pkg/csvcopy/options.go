@@ -135,3 +135,10 @@ func WithBatchSize(batchSize int) Option {
 		return nil
 	}
 }
+
+func WithLogBatches(logBatches bool) Option {
+	return func(c *Copier) error {
+		c.logBatches = logBatches
+		return nil
+	}
+}
