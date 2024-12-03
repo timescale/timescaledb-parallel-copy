@@ -76,7 +76,10 @@ func NewCopier(
 	}
 
 	for _, o := range options {
-		o(copier)
+		err := o(copier)
+		if err != nil {
+			return nil, fmt.Errorf("Error processing option, %T, %w", o, err)
+		}
 	}
 
 	if copier.skip > 0 && copier.verbose {
