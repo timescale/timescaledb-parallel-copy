@@ -105,3 +105,13 @@ func WithSkipHeaderCount(headerLineCount int) Option {
 		return nil
 	}
 }
+
+func WithWorkers(workers int) Option {
+	return func(c *Copier) error {
+		if workers <= 0 {
+			return errors.New("workers must be greater than zero")
+		}
+		c.workers = workers
+		return nil
+	}
+}
