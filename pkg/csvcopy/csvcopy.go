@@ -20,44 +20,20 @@ import (
 
 const TAB_CHAR_STR = "\\t"
 
-type Logger interface {
-	Infof(msg string, args ...interface{})
-}
-
-type noopLogger struct{}
-
-func (l *noopLogger) Infof(msg string, args ...interface{}) {}
-
-type Option func(c *Copier)
-
-func WithLogger(logger Logger) Option {
-	return func(c *Copier) {
-		c.logger = logger
-	}
-}
-
-// WithReportingFunction sets the function that will be called at
-// reportingPeriod with information about the copy progress
-func WithReportingFunction(f ReportFunc) Option {
-	return func(c *Copier) {
-		c.reportingFunction = f
-	}
-}
-
 type Result struct {
 	RowsRead int64
 	Duration time.Duration
 	RowRate  float64
 }
 
-var HeaderInCopyOptionsError = errors.New("'HEADER' in copyOptions")
-
 type Copier struct {
-	dbURL             string
-	overrides         []db.Overrideable
+	connString string
+	tableName  string
+
+	copyOptions string
+
 	schemaName        string
-	tableName         string
-	copyOptions       string
+	logger            Logger
 	splitCharacter    string
 	quoteCharacter    string
 	escapeCharacter   string
@@ -70,86 +46,44 @@ type Copier struct {
 	reportingFunction ReportFunc
 	verbose           bool
 	skip              int
-	logger            Logger
 	rowCount          int64
 }
 
 func NewCopier(
-	dbURL string,
-	dbName string,
-	schemaName string,
+	connString string,
 	tableName string,
-	copyOptions string,
-	splitCharacter string,
-	quoteCharacter string,
-	escapeCharacter string,
-	columns string,
-	skipHeader bool,
-	headerLinesCnt int,
-	workers int,
-	limit int64,
-	batchSize int,
-	logBatches bool,
-	reportingPeriod time.Duration,
-	verbose bool,
 	options ...Option,
 ) (*Copier, error) {
-	var overrides []db.Overrideable
-	if dbName != "" {
-		overrides = append(overrides, db.OverrideDBName(dbName))
-	}
-
-	if strings.Contains(strings.ToUpper(copyOptions), "HEADER") {
-		return nil, HeaderInCopyOptionsError
-	}
-
-	if len(quoteCharacter) > 1 {
-		return nil, errors.New("provided --quote must be a single-byte character")
-	}
-
-	if len(escapeCharacter) > 1 {
-		return nil, errors.New("provided --escape must be a single-byte character")
-	}
-
-	if headerLinesCnt <= 0 {
-		return nil, fmt.Errorf(
-			"provided --header-line-count (%d) must be greater than 0\n",
-			headerLinesCnt,
-		)
-	}
-
-	skip := 0
-	if skipHeader {
-		skip = headerLinesCnt
-	}
-
 	copier := &Copier{
-		dbURL:           dbURL,
-		overrides:       overrides,
-		schemaName:      schemaName,
-		tableName:       tableName,
-		copyOptions:     copyOptions,
-		splitCharacter:  splitCharacter,
-		quoteCharacter:  quoteCharacter,
-		escapeCharacter: escapeCharacter,
-		columns:         columns,
-		workers:         workers,
-		limit:           limit,
-		batchSize:       batchSize,
-		logBatches:      logBatches,
-		verbose:         verbose,
-		skip:            skip,
+		connString: connString,
+		tableName:  tableName,
+
+		// Defaults
+		schemaName:      "public",
 		logger:          &noopLogger{},
-		rowCount:        0,
-		reportingPeriod: reportingPeriod,
+		copyOptions:     "CSV",
+		splitCharacter:  ",",
+		quoteCharacter:  "",
+		escapeCharacter: "",
+		columns:         "",
+		workers:         1,
+		limit:           0,
+		batchSize:       5000,
+		logBatches:      false,
+		reportingPeriod: 0,
+		verbose:         false,
+		skip:            0,
 	}
 
 	for _, o := range options {
-		o(copier)
+		err := o(copier)
+		if err != nil {
+			return nil, fmt.Errorf("Error processing option, %T, %w", o, err)
+		}
 	}
 
-	if skip > 0 && verbose {
-		copier.logger.Infof("Skipping the first %d lines of the input.", headerLinesCnt)
+	if copier.skip > 0 && copier.verbose {
+		copier.logger.Infof("Skipping the first %d lines of the input.", copier.skip)
 	}
 
 	if copier.reportingFunction == nil {
@@ -160,7 +94,7 @@ func NewCopier(
 }
 
 func (c *Copier) Truncate() (err error) {
-	dbx, err := db.Connect(c.dbURL, c.overrides...)
+	dbx, err := db.Connect(c.connString)
 	if err != nil {
 		return fmt.Errorf("failed to connect to the database: %w", err)
 	}
@@ -300,7 +234,7 @@ func (e ErrAtRow) Unwrap() error {
 // processBatches reads batches from channel c and copies them to the target
 // server while tracking stats on the write.
 func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err error) {
-	dbx, err := db.Connect(c.dbURL, c.overrides...)
+	dbx, err := db.Connect(c.connString)
 	if err != nil {
 		return err
 	}
