@@ -146,7 +146,9 @@ func Connect(connStr string, overrides ...Overrideable) (*sqlx.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not connect: %v", err)
 	}
-	db, err := sqlx.Connect("pgx", mcc.DSN())
+	// It is required to connect using pgx/v5
+	// otherwise it may use pgx/v4 if that librariy is registered first
+	db, err := sqlx.Connect("pgx/v5", mcc.DSN())
 	if err != nil {
 		return nil, fmt.Errorf("could not connect: %v", err)
 	}
