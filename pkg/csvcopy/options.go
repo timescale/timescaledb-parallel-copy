@@ -40,8 +40,8 @@ func WithReportingFunction(f ReportFunc) Option {
 // WithReportingPeriod sets how often the reporting function will be called.
 func WithReportingPeriod(reportingPeriod time.Duration) Option {
 	return func(c *Copier) error {
-		if reportingPeriod <= 0 {
-			return fmt.Errorf("reporting period must be greater than zero")
+		if reportingPeriod < 0 {
+			return fmt.Errorf("reporting period must be equal or greater than zero")
 		}
 		c.reportingPeriod = reportingPeriod
 		return nil
