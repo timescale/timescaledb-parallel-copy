@@ -12,7 +12,7 @@ import (
 // Connect returns a SQLX database corresponding to the provided connection
 // string/URL, env variables, and any provided overrides.
 func Connect(connStr string) (*sqlx.DB, error) {
-	db, err := sqlx.Connect("pgx", connStr)
+	db, err := sqlx.Connect("pgx/v5", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("could not connect: %v", err)
 	}
