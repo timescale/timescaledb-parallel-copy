@@ -96,9 +96,10 @@ func main() {
 	if dbName != "" {
 		log.Fatalf("Error: Deprecated flag -db-name is being used. Update -connection to connect to the given database")
 	}
+	logger := &csvCopierLogger{}
 
 	opts := []csvcopy.Option{
-		csvcopy.WithLogger(&csvCopierLogger{}),
+		csvcopy.WithLogger(logger),
 		csvcopy.WithSchemaName(schemaName),
 		csvcopy.WithCopyOptions(copyOptions),
 		csvcopy.WithSplitCharacter(splitCharacter),
@@ -117,7 +118,7 @@ func main() {
 		log.Printf("batch errors will be stored at %s", batchErrorOutputDir)
 		handler := csvcopy.BatchHandlerSaveToFile(batchErrorOutputDir, nil)
 		if verbose {
-			handler = csvcopy.BatchHandlerLog(csvCopierLogger{}, handler)
+			handler = csvcopy.BatchHandlerLog(logger, handler)
 		}
 		opts = append(opts, csvcopy.WithBatchErrorHandler(handler))
 	}

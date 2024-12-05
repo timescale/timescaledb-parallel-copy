@@ -13,8 +13,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/timescale/timescaledb-parallel-copy/internal/batch"
 	"github.com/timescale/timescaledb-parallel-copy/internal/db"
+	"github.com/timescale/timescaledb-parallel-copy/pkg/batch"
 )
 
 const TAB_CHAR_STR = "\\t"

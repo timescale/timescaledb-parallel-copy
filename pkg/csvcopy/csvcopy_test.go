@@ -15,7 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
-	"github.com/timescale/timescaledb-parallel-copy/internal/batch"
+	"github.com/timescale/timescaledb-parallel-copy/pkg/batch"
 )
 
 func TestWriteDataToCSV(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/timescale/timescaledb-parallel-copy/internal/batch"
+	"github.com/timescale/timescaledb-parallel-copy/pkg/batch"
 )
 
 func TestScan(t *testing.T) {
