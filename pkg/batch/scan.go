@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net"
 )
 
@@ -39,6 +40,7 @@ func NewBatch(data net.Buffers, location Location) Batch {
 }
 
 func (b *Batch) snapshot() {
+	b.backup = net.Buffers{}
 	for _, d := range b.Data {
 		b.backup = append(b.backup, d)
 	}
@@ -46,6 +48,7 @@ func (b *Batch) snapshot() {
 
 // Makes data available again to read
 func (b *Batch) Rewind() {
+	b.Data = net.Buffers{}
 	for _, d := range b.backup {
 		b.Data = append(b.Data, d)
 	}
@@ -189,6 +192,7 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 			return ctx.Err()
 		}
 	}
+	log.Print("total rows ", rowsRead)
 
 	return nil
 }

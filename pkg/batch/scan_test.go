@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/timescale/timescaledb-parallel-copy/pkg/batch"
+	"golang.org/x/exp/rand"
 )
 
 func TestScan(t *testing.T) {
@@ -427,4 +430,40 @@ func BenchmarkScan(b *testing.B) {
 			opts.Escape = '\\'
 		}
 	}
+}
+
+var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ,")
+
+func RandStringRunes(n int) string {
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = letterRunes[rand.Intn(len(letterRunes))]
+	}
+	return string(b)
+}
+
+func TestRewind(t *testing.T) {
+	randomData := RandStringRunes(5000)
+	data := net.Buffers(bytes.Split([]byte(randomData), []byte(",")))
+
+	batch := batch.NewBatch(data, batch.NewLocation(0, 0, 0))
+
+	// reads all the data
+	buf := bytes.Buffer{}
+	buf.ReadFrom(&batch.Data)
+	require.Equal(t, strings.Replace(randomData, ",", "", -1), buf.String())
+	require.Empty(t, batch.Data)
+
+	// Reading again returns nothing
+	buf = bytes.Buffer{}
+	buf.ReadFrom(&batch.Data)
+	require.Empty(t, buf.String())
+	require.Empty(t, batch.Data)
+
+	// Reading again after rewind, returns all data
+	batch.Rewind()
+	buf = bytes.Buffer{}
+	buf.ReadFrom(&batch.Data)
+	require.Equal(t, strings.Replace(randomData, ",", "", -1), buf.String())
+
 }

@@ -38,6 +38,7 @@ var (
 	skipHeader          bool
 	headerLinesCnt      int
 	batchErrorOutputDir string
+	skipBatchErrors     bool
 
 	workers         int
 	limit           int64
@@ -67,7 +68,9 @@ func init() {
 	flag.StringVar(&columns, "columns", "", "Comma-separated columns present in CSV")
 	flag.BoolVar(&skipHeader, "skip-header", false, "Skip the first line of the input")
 	flag.IntVar(&headerLinesCnt, "header-line-count", 1, "Number of header lines")
+
 	flag.StringVar(&batchErrorOutputDir, "batch-error-output-dir", "", "directory to store batch errors. Settings this will save a .csv file with the contents of the batch that failed and continue with the rest of the data.")
+	flag.BoolVar(&skipBatchErrors, "skip-batch-errors", false, "if true, the copy will continue even if a batch fails")
 
 	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert")
 	flag.Int64Var(&limit, "limit", 0, "Number of rows to insert overall; 0 means to insert all")
@@ -114,14 +117,18 @@ func main() {
 		csvcopy.WithVerbose(verbose),
 	}
 
+	batchErrorHandler := csvcopy.BatchHandlerError()
+	if skipBatchErrors {
+		batchErrorHandler = csvcopy.BatchHandlerNoop()
+	}
 	if batchErrorOutputDir != "" {
 		log.Printf("batch errors will be stored at %s", batchErrorOutputDir)
-		handler := csvcopy.BatchHandlerSaveToFile(batchErrorOutputDir, nil)
-		if verbose {
-			handler = csvcopy.BatchHandlerLog(logger, handler)
-		}
-		opts = append(opts, csvcopy.WithBatchErrorHandler(handler))
+		batchErrorHandler = csvcopy.BatchHandlerSaveToFile(batchErrorOutputDir, batchErrorHandler)
 	}
+	if verbose || skipBatchErrors {
+		batchErrorHandler = csvcopy.BatchHandlerLog(logger, batchErrorHandler)
+	}
+	opts = append(opts, csvcopy.WithBatchErrorHandler(batchErrorHandler))
 
 	if headerLinesCnt > 1 {
 		opts = append(opts, csvcopy.WithSkipHeaderCount(headerLinesCnt))
