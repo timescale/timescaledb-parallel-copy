@@ -115,7 +115,11 @@ func main() {
 
 	if batchErrorOutputDir != "" {
 		log.Printf("batch errors will be stored at %s", batchErrorOutputDir)
-		opts = append(opts, csvcopy.WithSkipFailedBatchDir(batchErrorOutputDir))
+		handler := csvcopy.BatchHandlerSaveToFile(batchErrorOutputDir, nil)
+		if verbose {
+			handler = csvcopy.BatchHandlerLog(csvCopierLogger{}, handler)
+		}
+		opts = append(opts, csvcopy.WithBatchErrorHandler(handler))
 	}
 
 	if headerLinesCnt > 1 {

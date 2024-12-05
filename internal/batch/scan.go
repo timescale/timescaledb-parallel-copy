@@ -22,15 +22,32 @@ type Options struct {
 type Batch struct {
 	Data     net.Buffers
 	Location Location
-	// Backup hold the same data as Data. It is used to rewind if something goes wrong
+
+	// backup hold the same data as Data. It is used to rewind if something goes wrong
 	// Because it copies the slice, the memory is not duplicated
-	// Because Data is read only, the underlaying memory is not modified neither
-	Backup net.Buffers
+	// Because we only read data, the underlaying memory is not modified neither
+	backup net.Buffers
 }
 
-func (b *Batch) BuildBackup() {
+func NewBatch(data net.Buffers, location Location) Batch {
+	b := Batch{
+		Data:     data,
+		Location: location,
+	}
+	b.snapshot()
+	return b
+}
+
+func (b *Batch) snapshot() {
 	for _, d := range b.Data {
-		b.Backup = append(b.Backup, d)
+		b.backup = append(b.backup, d)
+	}
+}
+
+// Makes data available again to read
+func (b *Batch) Rewind() {
+	for _, d := range b.backup {
+		b.Data = append(b.Data, d)
 	}
 }
 
@@ -141,10 +158,10 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 
 			if bufferedRows >= opts.Size { // dispatch to COPY worker & reset
 				select {
-				case out <- Batch{
-					Data:     bufs,
-					Location: NewLocation(rowsRead, bufferedRows, opts.Skip),
-				}:
+				case out <- NewBatch(
+					bufs,
+					NewLocation(rowsRead, bufferedRows, opts.Skip),
+				):
 				case <-ctx.Done():
 					return ctx.Err()
 				}
@@ -164,10 +181,10 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 	// Finished reading input, make sure last batch goes out.
 	if len(bufs) > 0 {
 		select {
-		case out <- Batch{
-			Data:     bufs,
-			Location: NewLocation(rowsRead, bufferedRows, opts.Skip),
-		}:
+		case out <- NewBatch(
+			bufs,
+			NewLocation(rowsRead, bufferedRows, opts.Skip),
+		):
 		case <-ctx.Done():
 			return ctx.Err()
 		}

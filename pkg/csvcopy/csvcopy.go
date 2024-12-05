@@ -47,8 +47,7 @@ type Copier struct {
 	skip              int
 	rowCount          int64
 
-	failedBatchDestination WriteFS
-	failedBatchErrors      MultiError
+	failHandler BatchErrorHandler
 }
 
 func NewCopier(
@@ -201,9 +200,6 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	if err != nil {
 		return result, err
 	}
-	if len(c.failedBatchErrors) > 0 {
-		return result, c.failedBatchErrors
-	}
 	return result, nil
 }
 
@@ -291,7 +287,6 @@ func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err e
 			if !ok {
 				return
 			}
-			batch.BuildBackup()
 
 			start := time.Now()
 			rows, err := db.CopyFromLines(ctx, dbx, &batch.Data, copyCmd)
@@ -313,34 +308,14 @@ func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err e
 func (c *Copier) handleCopyError(batch batch.Batch, err error) error {
 	if pgerr, ok := err.(*pgconn.PgError); ok {
 		err = ErrAtRowFromPGError(pgerr, batch.Location.StartRow)
-	} else {
-		err = fmt.Errorf("[BATCH] starting at row %d: %w", batch.Location.StartRow, err)
 	}
 
-	return c.reportError(batch, err)
-}
-
-// reportError will attempt to handle and record the error if failedBatchDestination is set
-// otherwise, it just returns the same error to fail the execution
-func (c *Copier) reportError(batch batch.Batch, err error) error {
-	if c.failedBatchDestination == nil {
-		return err
+	if c.failHandler != nil {
+		batch.Rewind()
+		return c.failHandler(batch, err)
 	}
-	path := fmt.Sprintf("%d.csv", batch.Location.StartRow)
-	c.logger.Infof("failed batch file name %s, %s", path, err.Error())
+	return err
 
-	c.failedBatchErrors = append(c.failedBatchErrors, BatchError{Err: err, Path: path})
-
-	dst, err := c.failedBatchDestination.CreateFile(path)
-	if err != nil {
-		return fmt.Errorf("failed to create file to store batch error, %w", err)
-	}
-	defer dst.Close()
-	_, err = io.Copy(dst, &batch.Backup)
-	if err != nil {
-		return fmt.Errorf("failed to write file to store batch error, %w", err)
-	}
-	return nil
 }
 
 // report periodically prints the write rate in number of rows per second

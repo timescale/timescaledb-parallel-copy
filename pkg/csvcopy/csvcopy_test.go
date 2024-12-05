@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
-	"io"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -15,6 +15,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/timescale/timescaledb-parallel-copy/internal/batch"
 )
 
 func TestWriteDataToCSV(t *testing.T) {
@@ -258,7 +259,7 @@ func TestWriteReportProgress(t *testing.T) {
 	assert.Equal(t, []interface{}{int32(24), "qased", 2.4}, results)
 }
 
-func TestSkipFailedBatch(t *testing.T) {
+func TestFailedBatchHandler(t *testing.T) {
 	ctx := context.Background()
 
 	pgContainer, err := postgres.RunContainer(ctx,
@@ -316,36 +317,108 @@ func TestSkipFailedBatch(t *testing.T) {
 	}
 
 	writer.Flush()
-	fs := &MockWriteFS{}
+	fs := &MockErrorHandler{}
 
-	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithBatchSize(2), WithSkipFailedBatch(fs))
+	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithBatchSize(2), WithBatchErrorHandler(fs.HandleError))
 	require.NoError(t, err)
 	reader, err := os.Open(tmpfile.Name())
 	require.NoError(t, err)
 	result, err := copier.Copy(context.Background(), reader)
-	assert.Error(t, err)
-	assert.IsType(t, err, MultiError{})
+	assert.NoError(t, err)
 	assert.EqualValues(t, 4, result.RowsRead)
-	assert.Equal(t, "2.csv", err.(MultiError)[0].Path)
-	assert.EqualValues(t, 4, err.(MultiError)[0].Err.(*ErrAtRow).Row)
 
-	require.Contains(t, fs.Files, "2.csv")
-	assert.Equal(t, fs.Files["2.csv"].String(), "24,qased,2.4\n24,qased,hello\n")
+	require.Contains(t, fs.Files, 2)
+	assert.Equal(t, fs.Files[2].String(), "24,qased,2.4\n24,qased,hello\n")
+	require.Contains(t, fs.Errors, 2)
+	assert.EqualValues(t, fs.Errors[2].(*ErrAtRow).Row, 4)
 }
 
-type MockWriteFS struct {
-	Files map[string]*bytes.Buffer
-}
-type MockNoopCloserWriter struct {
-	*bytes.Buffer
+type MockErrorHandler struct {
+	Files  map[int]*bytes.Buffer
+	Errors map[int]error
 }
 
-func (MockNoopCloserWriter) Close() error { return nil }
-
-func (fs *MockWriteFS) CreateFile(name string) (io.WriteCloser, error) {
+func (fs *MockErrorHandler) HandleError(batch batch.Batch, reason error) error {
 	if fs.Files == nil {
-		fs.Files = make(map[string]*bytes.Buffer)
+		fs.Files = map[int]*bytes.Buffer{}
 	}
-	fs.Files[name] = &bytes.Buffer{}
-	return MockNoopCloserWriter{fs.Files[name]}, nil
+	if fs.Errors == nil {
+		fs.Errors = map[int]error{}
+	}
+	buf := &bytes.Buffer{}
+	buf.ReadFrom(&batch.Data)
+	fs.Files[int(batch.Location.StartRow)] = buf
+	fs.Errors[int(batch.Location.StartRow)] = reason
+	return nil
+}
+
+func TestFailedBatchHandlerFailure(t *testing.T) {
+	ctx := context.Background()
+
+	pgContainer, err := postgres.RunContainer(ctx,
+		testcontainers.WithImage("postgres:15.3-alpine"),
+		postgres.WithDatabase("test-db"),
+		postgres.WithUsername("postgres"),
+		postgres.WithPassword("postgres"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).WithStartupTimeout(5*time.Second)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		if err := pgContainer.Terminate(ctx); err != nil {
+			t.Fatalf("failed to terminate pgContainer: %s", err)
+		}
+	})
+
+	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	require.NoError(t, err)
+
+	conn, err := pgx.Connect(ctx, connStr)
+	require.NoError(t, err)
+	defer conn.Close(ctx)
+	_, err = conn.Exec(ctx, "create table public.metrics (device_id int, label text, value float8)")
+	require.NoError(t, err)
+
+	// Create a temporary CSV file
+	tmpfile, err := os.CreateTemp("", "example")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	// Write data to the CSV file
+	writer := csv.NewWriter(tmpfile)
+
+	data := [][]string{
+		// Batch 1
+		{"42", "xasev", "4.2"},
+		{"24", "qased", "2.4"},
+		// Batch 2
+		{"24", "qased", "2.4"},
+		{"24", "qased", "hello"},
+		// Batch 3
+		{"24", "qased", "2.4"},
+		{"24", "qased", "2.4"},
+	}
+
+	for _, record := range data {
+		if err := writer.Write(record); err != nil {
+			t.Fatalf("Error writing record to CSV: %v", err)
+		}
+	}
+
+	writer.Flush()
+
+	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithBatchSize(2), WithBatchErrorHandler(func(batch batch.Batch, err error) error {
+		return fmt.Errorf("couldn't handle error %w", err)
+	}))
+	require.NoError(t, err)
+	reader, err := os.Open(tmpfile.Name())
+	require.NoError(t, err)
+	_, err = copier.Copy(context.Background(), reader)
+	assert.Error(t, err)
+	assert.ErrorContains(t, err, "couldn't handle error")
+
 }

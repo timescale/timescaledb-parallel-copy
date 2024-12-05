@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"strings"
 	"time"
+
+	"github.com/timescale/timescaledb-parallel-copy/internal/batch"
 )
 
 type Option func(c *Copier) error
@@ -190,36 +191,62 @@ func WithSchemaName(schema string) Option {
 	}
 }
 
-type WriteFS interface {
-	CreateFile(name string) (io.WriteCloser, error)
-}
+// BatchErrorHandler is how batch errors are handled
+// It has the batch data so it can be inspected
+// The error has the failure reason
+// If the error is not handled properly, returning an error will stop the workers
+type BatchErrorHandler func(batch batch.Batch, err error) error
 
-// WithSkipFailedBatch sets a destination for the failed batches.
-// When a batch fails to be inserted, instead of failing the entire operation,
-// It will save the batch to the given location and proceed with the rest of the data.
-// This way, the batch can be analysed later and reimported once the issue is fixed.
-func WithSkipFailedBatch(destination WriteFS) Option {
+// WithBatchErrorHandler specifies which fail handler implementation to use
+func WithBatchErrorHandler(handler BatchErrorHandler) Option {
 	return func(c *Copier) error {
-		c.failedBatchDestination = destination
+		c.failHandler = handler
 		return nil
 	}
 }
 
-type OSWriteFS struct {
-	Root string
-}
-
-func (fs OSWriteFS) CreateFile(name string) (io.WriteCloser, error) {
-	return os.Create(path.Join(fs.Root, name))
-}
-
-func WithSkipFailedBatchDir(dir string) Option {
-	return func(c *Copier) error {
+// BatchHandlerSaveToFile saves the errors to the given directory using the batch start row as file name.
+func BatchHandlerSaveToFile(dir string, next BatchErrorHandler) BatchErrorHandler {
+	return BatchErrorHandler(func(batch batch.Batch, reason error) error {
 		err := os.MkdirAll(dir, os.ModePerm)
 		if err != nil {
 			return fmt.Errorf("failed to ensure directory exists: %w", err)
 		}
-		c.failedBatchDestination = OSWriteFS{Root: dir}
+
+		path := fmt.Sprintf("%d.csv", batch.Location.StartRow)
+
+		dst, err := os.Create(path)
+		if err != nil {
+			return fmt.Errorf("failed to create file to store batch error, %w", err)
+		}
+		defer dst.Close()
+
+		batch.Rewind()
+		_, err = io.Copy(dst, &batch.Data)
+		if err != nil {
+			return fmt.Errorf("failed to write file to store batch error, %w", err)
+		}
+
+		if next != nil {
+			return next(batch, reason)
+		}
 		return nil
-	}
+	})
+}
+
+// BatchHandlerLog prints a log line that reports the error in the given batch
+func BatchHandlerLog(log Logger, next BatchErrorHandler) BatchErrorHandler {
+	return BatchErrorHandler(func(batch batch.Batch, reason error) error {
+		log.Infof("Batch %d has error: %w", batch.Location.StartRow, reason)
+
+		if next != nil {
+			return next(batch, reason)
+		}
+		return nil
+	})
+}
+
+// BatchHandlerNoop no operation
+func BatchHandlerNoop() BatchErrorHandler {
+	return BatchErrorHandler(func(_ batch.Batch, _ error) error { return nil })
 }
