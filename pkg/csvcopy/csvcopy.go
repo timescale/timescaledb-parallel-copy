@@ -2,11 +2,8 @@ package csvcopy
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,73 +11,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jackc/pgconn"
-	_ "github.com/jackc/pgx/v4/stdlib"
+	"github.com/jackc/pgx/v5/pgconn"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/timescale/timescaledb-parallel-copy/internal/batch"
 	"github.com/timescale/timescaledb-parallel-copy/internal/db"
 )
 
 const TAB_CHAR_STR = "\\t"
-
-type Logger interface {
-	Infof(msg string, args ...interface{})
-}
-
-type noopLogger struct{}
-
-func (l *noopLogger) Infof(msg string, args ...interface{}) {}
-
-type Option func(c *Copier) error
-
-func WithLogger(logger Logger) Option {
-	return func(c *Copier) error {
-		c.logger = logger
-		return nil
-	}
-}
-
-// WithReportingFunction sets the function that will be called at
-// reportingPeriod with information about the copy progress
-func WithReportingFunction(f ReportFunc) Option {
-	return func(c *Copier) error {
-		c.reportingFunction = f
-		return nil
-	}
-}
-
-type WriteFS interface {
-	CreateFile(name string) (io.WriteCloser, error)
-}
-
-// WithSkipFailedBatch sets a destination for the failed batches.
-// When a batch fails to be inserted, instead of failing the entire operation,
-// It will save the batch to the given location and proceed with the rest of the data.
-// This way, the batch can be analysed later and reimported once the issue is fixed.
-func WithSkipFailedBatch(destination WriteFS) Option {
-	return func(c *Copier) error {
-		c.failedBatchDestination = destination
-		return nil
-	}
-}
-
-type OSWriteFS struct {
-	Root string
-}
-
-func (fs OSWriteFS) CreateFile(name string) (io.WriteCloser, error) {
-	return os.Create(path.Join(fs.Root, name))
-}
-
-func WithSkipFailedBatchDir(dir string) Option {
-	return func(c *Copier) error {
-		err := os.MkdirAll(dir, os.ModePerm)
-		if err != nil {
-			return fmt.Errorf("failed to ensure directory exists: %w", err)
-		}
-		c.failedBatchDestination = OSWriteFS{Root: dir}
-		return nil
-	}
-}
 
 type Result struct {
 	RowsRead int64
@@ -88,14 +25,14 @@ type Result struct {
 	RowRate  float64
 }
 
-var HeaderInCopyOptionsError = errors.New("'HEADER' in copyOptions")
-
 type Copier struct {
-	dbURL             string
-	overrides         []db.Overrideable
+	connString string
+	tableName  string
+
+	copyOptions string
+
 	schemaName        string
-	tableName         string
-	copyOptions       string
+	logger            Logger
 	splitCharacter    string
 	quoteCharacter    string
 	escapeCharacter   string
@@ -108,7 +45,6 @@ type Copier struct {
 	reportingFunction ReportFunc
 	verbose           bool
 	skip              int
-	logger            Logger
 	rowCount          int64
 
 	failedBatchDestination WriteFS
@@ -116,73 +52,29 @@ type Copier struct {
 }
 
 func NewCopier(
-	dbURL string,
-	dbName string,
-	schemaName string,
+	connString string,
 	tableName string,
-	copyOptions string,
-	splitCharacter string,
-	quoteCharacter string,
-	escapeCharacter string,
-	columns string,
-	skipHeader bool,
-	headerLinesCnt int,
-	workers int,
-	limit int64,
-	batchSize int,
-	logBatches bool,
-	reportingPeriod time.Duration,
-	verbose bool,
 	options ...Option,
 ) (*Copier, error) {
-	var overrides []db.Overrideable
-	if dbName != "" {
-		overrides = append(overrides, db.OverrideDBName(dbName))
-	}
-
-	if strings.Contains(strings.ToUpper(copyOptions), "HEADER") {
-		return nil, HeaderInCopyOptionsError
-	}
-
-	if len(quoteCharacter) > 1 {
-		return nil, errors.New("provided --quote must be a single-byte character")
-	}
-
-	if len(escapeCharacter) > 1 {
-		return nil, errors.New("provided --escape must be a single-byte character")
-	}
-
-	if headerLinesCnt <= 0 {
-		return nil, fmt.Errorf(
-			"provided --header-line-count (%d) must be greater than 0\n",
-			headerLinesCnt,
-		)
-	}
-
-	skip := 0
-	if skipHeader {
-		skip = headerLinesCnt
-	}
-
 	copier := &Copier{
-		dbURL:           dbURL,
-		overrides:       overrides,
-		schemaName:      schemaName,
-		tableName:       tableName,
-		copyOptions:     copyOptions,
-		splitCharacter:  splitCharacter,
-		quoteCharacter:  quoteCharacter,
-		escapeCharacter: escapeCharacter,
-		columns:         columns,
-		workers:         workers,
-		limit:           limit,
-		batchSize:       batchSize,
-		logBatches:      logBatches,
-		verbose:         verbose,
-		skip:            skip,
+		connString: connString,
+		tableName:  tableName,
+
+		// Defaults
+		schemaName:      "public",
 		logger:          &noopLogger{},
-		rowCount:        0,
-		reportingPeriod: reportingPeriod,
+		copyOptions:     "CSV",
+		splitCharacter:  ",",
+		quoteCharacter:  "",
+		escapeCharacter: "",
+		columns:         "",
+		workers:         1,
+		limit:           0,
+		batchSize:       5000,
+		logBatches:      false,
+		reportingPeriod: 0,
+		verbose:         false,
+		skip:            0,
 	}
 
 	for _, o := range options {
@@ -192,8 +84,8 @@ func NewCopier(
 		}
 	}
 
-	if skip > 0 && verbose {
-		copier.logger.Infof("Skipping the first %d lines of the input.", headerLinesCnt)
+	if copier.skip > 0 && copier.verbose {
+		copier.logger.Infof("Skipping the first %d lines of the input.", copier.skip)
 	}
 
 	if copier.reportingFunction == nil {
@@ -204,7 +96,7 @@ func NewCopier(
 }
 
 func (c *Copier) Truncate() (err error) {
-	dbx, err := db.Connect(c.dbURL, c.overrides...)
+	dbx, err := db.Connect(c.connString)
 	if err != nil {
 		return fmt.Errorf("failed to connect to the database: %w", err)
 	}
@@ -219,16 +111,12 @@ func (c *Copier) Truncate() (err error) {
 	return err
 }
 
-func (c *Copier) Copy(workerCtx context.Context, reader io.Reader) (Result, error) {
+func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	var workerWg sync.WaitGroup
-	var supportWg sync.WaitGroup
 	batchChan := make(chan batch.Batch, c.workers*2)
 
-	workerCtx, cancelWorkerCtx := context.WithCancel(workerCtx)
+	workerCtx, cancelWorkerCtx := context.WithCancel(ctx)
 	defer cancelWorkerCtx()
-
-	supportCtx, cancelSupportCtx := context.WithCancel(workerCtx)
-	defer cancelSupportCtx()
 
 	errCh := make(chan error, c.workers+1)
 
@@ -247,6 +135,9 @@ func (c *Copier) Copy(workerCtx context.Context, reader io.Reader) (Result, erro
 
 	}
 
+	var supportWg sync.WaitGroup
+	supportCtx, cancelSupportCtx := context.WithCancel(ctx)
+	defer cancelSupportCtx()
 	// Reporting thread
 	if c.reportingPeriod > (0 * time.Second) {
 		c.logger.Infof("There will be reports every %s", c.reportingPeriod.String())
@@ -346,21 +237,21 @@ func ErrAtRowFromPGError(pgerr *pgconn.PgError, offset int64) *ErrAtRow {
 	}
 }
 
-func (e *ErrAtRow) Error() string {
+func (e ErrAtRow) Error() string {
 	if e.Err != nil {
 		return fmt.Sprintf("at row %d, error %s", e.Row, e.Err.Error())
 	}
 	return fmt.Sprintf("error at row %d", e.Row)
 }
 
-func (e *ErrAtRow) Unwrap() error {
+func (e ErrAtRow) Unwrap() error {
 	return e.Err
 }
 
 // processBatches reads batches from channel c and copies them to the target
 // server while tracking stats on the write.
 func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err error) {
-	dbx, err := db.Connect(c.dbURL, c.overrides...)
+	dbx, err := db.Connect(c.connString)
 	if err != nil {
 		return err
 	}
@@ -387,6 +278,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err e
 	} else {
 		copyCmd = fmt.Sprintf("COPY %s FROM STDIN WITH DELIMITER %s %s %s", c.getFullTableName(), delimStr, quotes, c.copyOptions)
 	}
+	c.logger.Infof("Copy command: %s", copyCmd)
 
 	for {
 		if ctx.Err() != nil {

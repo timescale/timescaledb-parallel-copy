@@ -52,8 +52,9 @@ var (
 
 // Parse args
 func init() {
+	// Documented https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
 	flag.StringVar(&postgresConnect, "connection", "host=localhost user=postgres sslmode=disable", "PostgreSQL connection url")
-	flag.StringVar(&dbName, "db-name", "", "Database where the destination table exists")
+	flag.StringVar(&dbName, "db-name", "", "(deprecated) Database where the destination table exists")
 	flag.StringVar(&tableName, "table", "test_table", "Destination table for insertions")
 	flag.StringVar(&schemaName, "schema", "public", "Destination table's schema")
 	flag.BoolVar(&truncate, "truncate", false, "Truncate the destination table before insert")
@@ -88,34 +89,44 @@ func (l csvCopierLogger) Infof(msg string, args ...interface{}) {
 
 func main() {
 	if showVersion {
-		fmt.Printf("%s %s (%s %s)\n", binName, version, runtime.GOOS, runtime.GOARCH)
+		log.Printf("%s %s (%s %s)\n", binName, version, runtime.GOOS, runtime.GOARCH)
 		os.Exit(0)
 	}
-	opts := []csvcopy.Option{}
-	opts = append(opts, csvcopy.WithLogger(&csvCopierLogger{}))
+
+	if dbName != "" {
+		log.Fatalf("Error: Deprecated flag -db-name is being used. Update -connection to connect to the given database")
+	}
+
+	opts := []csvcopy.Option{
+		csvcopy.WithLogger(&csvCopierLogger{}),
+		csvcopy.WithSchemaName(schemaName),
+		csvcopy.WithCopyOptions(copyOptions),
+		csvcopy.WithSplitCharacter(splitCharacter),
+		csvcopy.WithQuoteCharacter(quoteCharacter),
+		csvcopy.WithEscapeCharacter(escapeCharacter),
+		csvcopy.WithColumns(columns),
+		csvcopy.WithWorkers(workers),
+		csvcopy.WithLimit(limit),
+		csvcopy.WithBatchSize(batchSize),
+		csvcopy.WithLogBatches(logBatches),
+		csvcopy.WithReportingPeriod(reportingPeriod),
+		csvcopy.WithVerbose(verbose),
+	}
+
 	if batchErrorOutputDir != "" {
 		log.Printf("batch errors will be stored at %s", batchErrorOutputDir)
 		opts = append(opts, csvcopy.WithSkipFailedBatchDir(batchErrorOutputDir))
 	}
 
+	if headerLinesCnt > 1 {
+		opts = append(opts, csvcopy.WithSkipHeaderCount(headerLinesCnt))
+	} else if skipHeader {
+		opts = append(opts, csvcopy.WithSkipHeader(skipHeader))
+	}
+
 	copier, err := csvcopy.NewCopier(
 		postgresConnect,
-		dbName,
-		schemaName,
 		tableName,
-		copyOptions,
-		splitCharacter,
-		quoteCharacter,
-		escapeCharacter,
-		columns,
-		skipHeader,
-		headerLinesCnt,
-		workers,
-		limit,
-		batchSize,
-		logBatches,
-		reportingPeriod,
-		verbose,
 		opts...,
 	)
 	if err != nil {
