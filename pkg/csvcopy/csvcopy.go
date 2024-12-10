@@ -26,13 +26,14 @@ type Result struct {
 	RowRate  float64
 }
 
-var HeaderInCopyOptionsError = errors.New("'HEADER' in copyOptions")
-
 type Copier struct {
-	connString        string
+	connString string
+	tableName  string
+
+	copyOptions string
+
 	schemaName        string
-	tableName         string
-	copyOptions       string
+	logger            Logger
 	splitCharacter    string
 	quoteCharacter    string
 	escapeCharacter   string
@@ -45,79 +46,44 @@ type Copier struct {
 	reportingFunction ReportFunc
 	verbose           bool
 	skip              int
-	logger            Logger
 	rowCount          int64
 }
 
 func NewCopier(
 	connString string,
-	schemaName string,
 	tableName string,
-	copyOptions string,
-	splitCharacter string,
-	quoteCharacter string,
-	escapeCharacter string,
-	columns string,
-	skipHeader bool,
-	headerLinesCnt int,
-	workers int,
-	limit int64,
-	batchSize int,
-	logBatches bool,
-	reportingPeriod time.Duration,
-	verbose bool,
 	options ...Option,
 ) (*Copier, error) {
-	if strings.Contains(strings.ToUpper(copyOptions), "HEADER") {
-		return nil, HeaderInCopyOptionsError
-	}
-
-	if len(quoteCharacter) > 1 {
-		return nil, errors.New("provided --quote must be a single-byte character")
-	}
-
-	if len(escapeCharacter) > 1 {
-		return nil, errors.New("provided --escape must be a single-byte character")
-	}
-
-	if headerLinesCnt <= 0 {
-		return nil, fmt.Errorf(
-			"provided --header-line-count (%d) must be greater than 0\n",
-			headerLinesCnt,
-		)
-	}
-
-	skip := 0
-	if skipHeader {
-		skip = headerLinesCnt
-	}
-
 	copier := &Copier{
-		connString:      connString,
-		schemaName:      schemaName,
-		tableName:       tableName,
-		copyOptions:     copyOptions,
-		splitCharacter:  splitCharacter,
-		quoteCharacter:  quoteCharacter,
-		escapeCharacter: escapeCharacter,
-		columns:         columns,
-		workers:         workers,
-		limit:           limit,
-		batchSize:       batchSize,
-		logBatches:      logBatches,
-		verbose:         verbose,
-		skip:            skip,
+		connString: connString,
+		tableName:  tableName,
+
+		// Defaults
+		schemaName:      "public",
 		logger:          &noopLogger{},
-		rowCount:        0,
-		reportingPeriod: reportingPeriod,
+		copyOptions:     "CSV",
+		splitCharacter:  ",",
+		quoteCharacter:  "",
+		escapeCharacter: "",
+		columns:         "",
+		workers:         1,
+		limit:           0,
+		batchSize:       5000,
+		logBatches:      false,
+		reportingPeriod: 0,
+		verbose:         false,
+		skip:            0,
 	}
 
 	for _, o := range options {
-		o(copier)
+		err := o(copier)
+		if err != nil {
+			return nil, fmt.Errorf("Error processing option, %T, %w", o, err)
+		}
 	}
 
-	if skip > 0 && verbose {
-		copier.logger.Infof("Skipping the first %d lines of the input.", headerLinesCnt)
+	if copier.skip > 0 && copier.verbose {
+		copier.logger.Infof("Skipping the first %d lines of the input.", copier.skip)
 	}
 
 	if copier.reportingFunction == nil {
@@ -295,6 +261,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err e
 	} else {
 		copyCmd = fmt.Sprintf("COPY %s FROM STDIN WITH DELIMITER %s %s %s", c.getFullTableName(), delimStr, quotes, c.copyOptions)
 	}
+	c.logger.Infof("Copy command: %s", copyCmd)
 
 	for {
 		if ctx.Err() != nil {

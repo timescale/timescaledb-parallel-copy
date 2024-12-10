@@ -94,25 +94,32 @@ func main() {
 	if dbName != "" {
 		log.Fatalf("Error: Deprecated flag -db-name is being used. Update -connection to connect to the given database")
 	}
+	opts := []csvcopy.Option{
+		csvcopy.WithLogger(&csvCopierLogger{}),
+		csvcopy.WithSchemaName(schemaName),
+		csvcopy.WithCopyOptions(copyOptions),
+		csvcopy.WithSplitCharacter(splitCharacter),
+		csvcopy.WithQuoteCharacter(quoteCharacter),
+		csvcopy.WithEscapeCharacter(escapeCharacter),
+		csvcopy.WithColumns(columns),
+		csvcopy.WithWorkers(workers),
+		csvcopy.WithLimit(limit),
+		csvcopy.WithBatchSize(batchSize),
+		csvcopy.WithLogBatches(logBatches),
+		csvcopy.WithReportingPeriod(reportingPeriod),
+		csvcopy.WithVerbose(verbose),
+	}
+
+	if skipHeader {
+		opts = append(opts,
+			csvcopy.WithSkipHeaderCount(headerLinesCnt),
+		)
+	}
 
 	copier, err := csvcopy.NewCopier(
 		postgresConnect,
-		schemaName,
 		tableName,
-		copyOptions,
-		splitCharacter,
-		quoteCharacter,
-		escapeCharacter,
-		columns,
-		skipHeader,
-		headerLinesCnt,
-		workers,
-		limit,
-		batchSize,
-		logBatches,
-		reportingPeriod,
-		verbose,
-		csvcopy.WithLogger(&csvCopierLogger{}),
+		opts...,
 	)
 	if err != nil {
 		if errors.Is(err, csvcopy.HeaderInCopyOptionsError) {
