@@ -495,9 +495,8 @@ func TestFailedBatchHandlerFailure(t *testing.T) {
 	}
 
 	for _, record := range data {
-		if err := writer.Write(record); err != nil {
-			t.Fatalf("Error writing record to CSV: %v", err)
-		}
+		err := writer.Write(record)
+	        require.NoError(t, err, "Error writing record to CSV")
 	}
 
 	writer.Flush()
