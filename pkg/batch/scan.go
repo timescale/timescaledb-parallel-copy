@@ -129,7 +129,7 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 	bufs := make(net.Buffers, 0, opts.Size)
 	var bufferedRows int
 
-	byteStart := counter.Total() - reader.Buffered()
+	byteStart := counter.Total - reader.Buffered()
 	for {
 		eol := false
 
@@ -169,7 +169,7 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 			}
 
 			if bufferedRows >= opts.Size { // dispatch to COPY worker & reset
-				byteEnd := counter.Total() - reader.Buffered()
+				byteEnd := counter.Total - reader.Buffered()
 				select {
 				case out <- NewBatch(
 					bufs,
@@ -194,7 +194,7 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 
 	// Finished reading input, make sure last batch goes out.
 	if len(bufs) > 0 {
-		byteEnd := counter.Total() - reader.Buffered()
+		byteEnd := counter.Total - reader.Buffered()
 		select {
 		case out <- NewBatch(
 			bufs,
@@ -304,14 +304,11 @@ func (c *csvRowState) NeedsMore() bool {
 // CountReader is a wrapper that counts how many bytes have been read from the given reader
 type CountReader struct {
 	Reader io.Reader
-	total  int
+	Total  int
 }
 
 func (c *CountReader) Read(b []byte) (int, error) {
 	n, err := c.Reader.Read(b)
-	c.total += n
+	c.Total += n
 	return n, err
-}
-func (c *CountReader) Total() int {
-	return c.total
 }
