@@ -9,10 +9,6 @@ import (
 	"net"
 )
 
-const (
-	lineBreakLen = len("\n")
-)
-
 // Options contains all the configurable knobs for Scan.
 type Options struct {
 	Size  int   // maximum number of rows per batch
@@ -45,17 +41,13 @@ func NewBatch(data net.Buffers, location Location) Batch {
 
 func (b *Batch) snapshot() {
 	b.backup = net.Buffers{}
-	for _, d := range b.Data {
-		b.backup = append(b.backup, d)
-	}
+	b.backup = append(b.backup, b.Data...)
 }
 
 // Makes data available again to read
 func (b *Batch) Rewind() {
 	b.Data = net.Buffers{}
-	for _, d := range b.backup {
-		b.Data = append(b.Data, d)
-	}
+	b.Data = append(b.Data, b.backup...)
 }
 
 // Location positions a batch within the original data

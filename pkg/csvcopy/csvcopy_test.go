@@ -434,7 +434,10 @@ func (fs *MockErrorHandler) HandleError(batch batch.Batch, reason error) error {
 		fs.Errors = map[int]error{}
 	}
 	buf := &bytes.Buffer{}
-	buf.ReadFrom(&batch.Data)
+	_, err := buf.ReadFrom(&batch.Data)
+	if err != nil {
+		return err
+	}
 	fs.Files[int(batch.Location.StartRow)] = buf
 	fs.Errors[int(batch.Location.StartRow)] = reason
 	return nil

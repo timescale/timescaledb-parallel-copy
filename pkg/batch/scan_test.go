@@ -448,22 +448,26 @@ func TestRewind(t *testing.T) {
 
 	batch := batch.NewBatch(data, batch.NewLocation(0, 0, 0, 0, 0))
 
+	var err error
 	// reads all the data
 	buf := bytes.Buffer{}
-	buf.ReadFrom(&batch.Data)
+	_, err = buf.ReadFrom(&batch.Data)
+	require.NoError(t, err)
 	require.Equal(t, strings.Replace(randomData, ",", "", -1), buf.String())
 	require.Empty(t, batch.Data)
 
 	// Reading again returns nothing
 	buf = bytes.Buffer{}
-	buf.ReadFrom(&batch.Data)
+	_, err = buf.ReadFrom(&batch.Data)
+	require.NoError(t, err)
 	require.Empty(t, buf.String())
 	require.Empty(t, batch.Data)
 
 	// Reading again after rewind, returns all data
 	batch.Rewind()
 	buf = bytes.Buffer{}
-	buf.ReadFrom(&batch.Data)
+	_, err = buf.ReadFrom(&batch.Data)
+	require.NoError(t, err)
 	require.Equal(t, strings.Replace(randomData, ",", "", -1), buf.String())
 
 }
