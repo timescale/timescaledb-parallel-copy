@@ -358,14 +358,11 @@ func TestFailedBatchHandler(t *testing.T) {
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).WithStartupTimeout(5*time.Second)),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		if err := pgContainer.Terminate(ctx); err != nil {
-			t.Fatalf("failed to terminate pgContainer: %s", err)
-		}
+		err := pgContainer.Terminate(ctx)
+		require.NoError(t, err)
 	})
 
 	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
@@ -460,9 +457,8 @@ func TestFailedBatchHandlerFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		if err := pgContainer.Terminate(ctx); err != nil {
-			t.Fatalf("failed to terminate pgContainer: %s", err)
-		}
+		err := pgContainer.Terminate(ctx)
+		require.NoError(t, err)
 	})
 
 	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
@@ -496,7 +492,7 @@ func TestFailedBatchHandlerFailure(t *testing.T) {
 
 	for _, record := range data {
 		err := writer.Write(record)
-	        require.NoError(t, err, "Error writing record to CSV")
+		require.NoError(t, err, "Error writing record to CSV")
 	}
 
 	writer.Flush()
