@@ -411,14 +411,16 @@ func TestFailedBatchHandler(t *testing.T) {
 	reader, err := os.Open(tmpfile.Name())
 	require.NoError(t, err)
 	result, err := copier.Copy(context.Background(), reader)
-	assert.NoError(t, err)
-	assert.EqualValues(t, 4, result.RowsRead)
+	require.NoError(t, err)
+	require.EqualValues(t, 4, result.RowsRead)
 
 	require.Contains(t, fs.Files, 1)
-	assert.Equal(t, fs.Files[1].String(), "24,qased,2.4\n24,qased,hello\n")
+	require.Equal(t, fs.Files[1].String(), "24,qased,2.4\n24,qased,hello\n")
 	require.Contains(t, fs.Errors, 1)
 	assert.EqualValues(t, fs.Errors[1].(*ErrAtRow).RowAtLocation(), 3)
+	assert.EqualValues(t, fs.Errors[1].(*ErrAtRow).BatchLocation.RowCount, 2)
 	assert.EqualValues(t, fs.Errors[1].(*ErrAtRow).BatchLocation.ByteOffset, 26)
+	assert.EqualValues(t, fs.Errors[1].(*ErrAtRow).BatchLocation.ByteLen, len("24,qased,2.4\n24,qased,hello\n"))
 }
 
 type MockErrorHandler struct {
@@ -509,7 +511,7 @@ func TestFailedBatchHandlerFailure(t *testing.T) {
 	reader, err := os.Open(tmpfile.Name())
 	require.NoError(t, err)
 	_, err = copier.Copy(context.Background(), reader)
-	assert.Error(t, err)
-	assert.ErrorContains(t, err, "couldn't handle error")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "couldn't handle error")
 
 }
