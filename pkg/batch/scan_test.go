@@ -434,7 +434,7 @@ func BenchmarkScan(b *testing.B) {
 
 var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ,")
 
-func RandStringRunes(n int) string {
+func RandString(n int) string {
 	b := make([]rune, n)
 	for i := range b {
 		b[i] = letterRunes[rand.Intn(len(letterRunes))]
@@ -443,7 +443,7 @@ func RandStringRunes(n int) string {
 }
 
 func TestRewind(t *testing.T) {
-	randomData := RandStringRunes(5000)
+	randomData := RandString(5000)
 	data := net.Buffers(bytes.Split([]byte(randomData), []byte(",")))
 
 	batch := batch.NewBatch(data, batch.NewLocation(0, 0, 0, 0, 0))
