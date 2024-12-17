@@ -24,9 +24,9 @@ type Batch struct {
 	Data     net.Buffers
 	Location Location
 
-	// backup hold the same data as Data. It is used to rewind if something goes wrong
+	// backup holds the same data as Data. It is used to rewind if something goes wrong
 	// Because it copies the slice, the memory is not duplicated
-	// Because we only read data, the underlaying memory is not modified neither
+	// Because we only read data, the underlaying memory is not modified either
 	backup net.Buffers
 }
 
@@ -58,7 +58,7 @@ type Location struct {
 	StartRow int64
 	// RowCount is the number of rows in the batch
 	RowCount int
-	// ByteOffset is the byte position on the original file.
+	// ByteOffset is the byte position in the original file.
 	// It can be used with ReadAt to process the same batch again.
 	ByteOffset int
 	// ByteLen represents the number of bytes for the batch.
