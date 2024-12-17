@@ -446,7 +446,7 @@ func TestRewind(t *testing.T) {
 	randomData := RandStringRunes(5000)
 	data := net.Buffers(bytes.Split([]byte(randomData), []byte(",")))
 
-	batch := batch.NewBatch(data, batch.NewLocation(0, 0, 0))
+	batch := batch.NewBatch(data, batch.NewLocation(0, 0, 0, 0, 0))
 
 	// reads all the data
 	buf := bytes.Buffer{}

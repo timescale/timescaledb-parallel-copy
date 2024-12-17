@@ -9,6 +9,10 @@ import (
 	"net"
 )
 
+const (
+	lineBreakLen = len("\n")
+)
+
 // Options contains all the configurable knobs for Scan.
 type Options struct {
 	Size  int   // maximum number of rows per batch
@@ -56,14 +60,26 @@ func (b *Batch) Rewind() {
 
 // Location positions a batch within the original data
 type Location struct {
+	// StartRow represents the index of the row where the batch starts.
+	// First row of the file is row 0
+	// The header counts as a line
 	StartRow int64
-	Length   int
+	// RowCount is the number of rows in the batch
+	RowCount int
+	// ByteOffset is the byte position on the original file.
+	// It can be used with ReadAt to process the same batch again.
+	ByteOffset int
+	// ByteLen represents the number of bytes for the batch.
+	// It can be used to know how big the batch is and read it accordingly
+	ByteLen int
 }
 
-func NewLocation(rowsRead int64, bufferedRows int, skip int) Location {
+func NewLocation(rowsRead int64, bufferedRows int, skip int, byteOffset int, byteLen int) Location {
 	return Location{
-		StartRow: rowsRead - int64(bufferedRows) + int64(skip),
-		Length:   bufferedRows,
+		StartRow:   rowsRead - int64(bufferedRows) + int64(skip) - 1, // Index rows starting at 0
+		RowCount:   bufferedRows,
+		ByteOffset: byteOffset,
+		ByteLen:    byteLen,
 	}
 }
 
@@ -79,7 +95,8 @@ func NewLocation(rowsRead int64, bufferedRows int, skip int) Location {
 // opts.Escape as the QUOTE and ESCAPE characters used for the CSV input.
 func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) error {
 	var rowsRead int64
-	reader := bufio.NewReader(r)
+	counter := &CountReader{Next: r}
+	reader := bufio.NewReader(counter)
 
 	for skip := opts.Skip; skip > 0; {
 		// The use of ReadLine() here avoids copying or buffering data that
@@ -92,7 +109,6 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 		} else if err != nil {
 			return fmt.Errorf("skipping header: %w", err)
 		}
-
 		if !isPrefix {
 			// We pulled a full row from the buffer.
 			skip--
@@ -121,6 +137,7 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 	bufs := make(net.Buffers, 0, opts.Size)
 	var bufferedRows int
 
+	byteStart := counter.Total() - reader.Buffered()
 	for {
 		eol := false
 
@@ -160,16 +177,18 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 			}
 
 			if bufferedRows >= opts.Size { // dispatch to COPY worker & reset
+				byteEnd := counter.Total() - reader.Buffered()
 				select {
 				case out <- NewBatch(
 					bufs,
-					NewLocation(rowsRead, bufferedRows, opts.Skip),
+					NewLocation(rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 				):
 				case <-ctx.Done():
 					return ctx.Err()
 				}
 				bufs = make(net.Buffers, 0, opts.Size)
 				bufferedRows = 0
+				byteStart = byteEnd
 			}
 		}
 
@@ -183,10 +202,11 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 
 	// Finished reading input, make sure last batch goes out.
 	if len(bufs) > 0 {
+		byteEnd := counter.Total() - reader.Buffered()
 		select {
 		case out <- NewBatch(
 			bufs,
-			NewLocation(rowsRead, bufferedRows, opts.Skip),
+			NewLocation(rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 		):
 		case <-ctx.Done():
 			return ctx.Err()
@@ -287,4 +307,19 @@ func (c *csvRowState) NeedsMore() bool {
 	// We don't need to check c.inEscape, because that can only be true if
 	// c.inQuote is also true.
 	return c.inQuote
+}
+
+// CountReader is a wrapper that counts how many bytes have been read from the given reader
+type CountReader struct {
+	Next  io.Reader
+	total int
+}
+
+func (c *CountReader) Read(b []byte) (int, error) {
+	n, err := c.Next.Read(b)
+	c.total += n
+	return n, err
+}
+func (c *CountReader) Total() int {
+	return c.total
 }

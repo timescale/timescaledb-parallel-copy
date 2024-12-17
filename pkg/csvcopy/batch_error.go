@@ -42,7 +42,7 @@ func BatchHandlerSaveToFile(dir string, next BatchErrorHandler) BatchErrorHandle
 // BatchHandlerLog prints a log line that reports the error in the given batch
 func BatchHandlerLog(log Logger, next BatchErrorHandler) BatchErrorHandler {
 	return BatchErrorHandler(func(batch batch.Batch, reason error) error {
-		log.Infof("Batch %d has error: %s", batch.Location.StartRow, reason.Error())
+		log.Infof("Batch %d, starting at byte %d with len %d, has error: %s", batch.Location.StartRow, batch.Location.ByteOffset, batch.Location.ByteLen, reason.Error())
 
 		if next != nil {
 			return next(batch, reason)

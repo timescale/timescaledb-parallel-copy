@@ -205,39 +205,42 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 
 type ErrAtRow struct {
 	Err error
-	Row int64
+	// Row is the row reported by PgError
+	// The value is relative to the location
+	Row           int
+	BatchLocation batch.Location
 }
 
-func ErrAtRowFromPGError(pgerr *pgconn.PgError, offset int64) *ErrAtRow {
+// RowAtLocation returns the row number taking into account the batch location
+// so the number matches the original file
+func (err *ErrAtRow) RowAtLocation() int {
+	if err.Row == -1 {
+		return -1
+	}
+	return err.Row + int(err.BatchLocation.StartRow)
+}
+
+func ExtractRowFrom(pgerr *pgconn.PgError) int {
 	// Example of Where field
 	// "COPY metrics, line 1, column value: \"hello\""
 	match := regexp.MustCompile(`line (\d+)`).FindStringSubmatch(pgerr.Where)
 	if len(match) != 2 {
-		return &ErrAtRow{
-			Err: pgerr,
-			Row: -1,
-		}
+		return -1
 	}
 
 	line, err := strconv.Atoi(match[1])
 	if err != nil {
-		return &ErrAtRow{
-			Err: pgerr,
-			Row: -1,
-		}
+		return -1
 	}
 
-	return &ErrAtRow{
-		Err: pgerr,
-		Row: offset + int64(line),
-	}
+	return line
 }
 
 func (e ErrAtRow) Error() string {
 	if e.Err != nil {
-		return fmt.Sprintf("at row %d, error %s", e.Row, e.Err.Error())
+		return fmt.Sprintf("at row %d, error %s", e.RowAtLocation(), e.Err.Error())
 	}
-	return fmt.Sprintf("error at row %d", e.Row)
+	return fmt.Sprintf("error at row %d", e.RowAtLocation())
 }
 
 func (e ErrAtRow) Unwrap() error {
@@ -300,21 +303,25 @@ func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err e
 
 			if c.logBatches {
 				took := time.Since(start)
-				fmt.Printf("[BATCH] starting at row %d, took %v, batch size %d, row rate %f/sec\n", batch.Location.StartRow, took, batch.Location.Length, float64(batch.Location.Length)/float64(took.Seconds()))
+				fmt.Printf("[BATCH] starting at row %d, took %v, batch size %d, row rate %f/sec\n", batch.Location.StartRow, took, batch.Location.RowCount, float64(batch.Location.RowCount)/float64(took.Seconds()))
 			}
 		}
 	}
 }
 func (c *Copier) handleCopyError(batch batch.Batch, err error) error {
+	errAt := &ErrAtRow{
+		Err:           err,
+		BatchLocation: batch.Location,
+	}
 	if pgerr, ok := err.(*pgconn.PgError); ok {
-		err = ErrAtRowFromPGError(pgerr, batch.Location.StartRow)
+		errAt.Row = ExtractRowFrom(pgerr)
 	}
 
 	if c.failHandler != nil {
 		batch.Rewind()
-		return c.failHandler(batch, err)
+		return c.failHandler(batch, errAt)
 	}
-	return err
+	return errAt
 
 }
 
