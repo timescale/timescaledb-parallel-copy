@@ -457,9 +457,7 @@ func TestFailedBatchHandlerFailure(t *testing.T) {
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).WithStartupTimeout(5*time.Second)),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 
 	t.Cleanup(func() {
 		if err := pgContainer.Terminate(ctx); err != nil {
@@ -497,9 +495,8 @@ func TestFailedBatchHandlerFailure(t *testing.T) {
 	}
 
 	for _, record := range data {
-		if err := writer.Write(record); err != nil {
-			t.Fatalf("Error writing record to CSV: %v", err)
-		}
+		err := writer.Write(record)
+	        require.NoError(t, err, "Error writing record to CSV")
 	}
 
 	writer.Flush()
