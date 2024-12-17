@@ -114,9 +114,8 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	var workerWg sync.WaitGroup
 	batchChan := make(chan batch.Batch, c.workers*2)
 
-	workerCtx, cancelWorkerCtx := context.WithCancel(ctx)
-	defer cancelWorkerCtx()
-
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	errCh := make(chan error, c.workers+1)
 
 	// Generate COPY workers
@@ -124,11 +123,10 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		workerWg.Add(1)
 		go func() {
 			defer workerWg.Done()
-			defer c.logger.Infof("worker finished")
-			err := c.processBatches(workerCtx, batchChan)
+			err := c.processBatches(ctx, batchChan)
 			if err != nil {
 				errCh <- err
-				cancelWorkerCtx()
+				cancel()
 			}
 		}()
 
@@ -142,7 +140,6 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		c.logger.Infof("There will be reports every %s", c.reportingPeriod.String())
 		supportWg.Add(1)
 		go func() {
-			defer c.logger.Infof("reporting stopped")
 			defer supportWg.Done()
 			c.report(supportCtx)
 		}()
@@ -164,22 +161,18 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	}
 
 	start := time.Now()
-	workerWg.Add(1)
 	go func() {
-		defer workerWg.Done()
-		defer c.logger.Infof("scan done")
-		if err := batch.Scan(workerCtx, reader, batchChan, opts); err != nil {
+		if err := batch.Scan(ctx, reader, batchChan, opts); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
-			cancelWorkerCtx()
+			cancel()
 		}
 		close(batchChan)
 	}()
-	c.logger.Infof("waiting for workers to complete")
 	workerWg.Wait()
 
-	c.logger.Infof("waiting for support tasks to complete")
 	cancelSupportCtx()
 	supportWg.Wait()
+
 	close(errCh)
 	// We are only interested on the first error message since all other errors
 	// must probably are related to the context being canceled.
