@@ -87,7 +87,7 @@ func NewLocation(rowsRead int64, bufferedRows int, skip int, byteOffset int, byt
 // opts.Escape as the QUOTE and ESCAPE characters used for the CSV input.
 func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) error {
 	var rowsRead int64
-	counter := &CountReader{Next: r}
+	counter := &CountReader{Reader: r}
 	reader := bufio.NewReader(counter)
 
 	for skip := opts.Skip; skip > 0; {
@@ -303,12 +303,12 @@ func (c *csvRowState) NeedsMore() bool {
 
 // CountReader is a wrapper that counts how many bytes have been read from the given reader
 type CountReader struct {
-	Next  io.Reader
-	total int
+	Reader io.Reader
+	total  int
 }
 
 func (c *CountReader) Read(b []byte) (int, error) {
-	n, err := c.Next.Read(b)
+	n, err := c.Reader.Read(b)
 	c.total += n
 	return n, err
 }
