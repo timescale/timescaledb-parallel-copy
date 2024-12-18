@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/timescale/timescaledb-parallel-copy/pkg/batch"
 )
 
 type Option func(c *Copier) error
@@ -183,6 +185,20 @@ func WithVerbose(verbose bool) Option {
 func WithSchemaName(schema string) Option {
 	return func(c *Copier) error {
 		c.schemaName = schema
+		return nil
+	}
+}
+
+// BatchErrorHandler is how batch errors are handled
+// It has the batch data so it can be inspected
+// The error has the failure reason
+// If the error is not handled properly, returning an error will stop the workers
+type BatchErrorHandler func(batch batch.Batch, err error) error
+
+// WithBatchErrorHandler specifies which fail handler implementation to use
+func WithBatchErrorHandler(handler BatchErrorHandler) Option {
+	return func(c *Copier) error {
+		c.failHandler = handler
 		return nil
 	}
 }

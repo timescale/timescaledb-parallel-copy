@@ -33,10 +33,12 @@ var (
 	quoteCharacter  string
 	escapeCharacter string
 
-	fromFile       string
-	columns        string
-	skipHeader     bool
-	headerLinesCnt int
+	fromFile            string
+	columns             string
+	skipHeader          bool
+	headerLinesCnt      int
+	batchErrorOutputDir string
+	skipBatchErrors     bool
 
 	workers         int
 	limit           int64
@@ -67,6 +69,9 @@ func init() {
 	flag.BoolVar(&skipHeader, "skip-header", false, "Skip the first line of the input")
 	flag.IntVar(&headerLinesCnt, "header-line-count", 1, "Number of header lines")
 
+	flag.StringVar(&batchErrorOutputDir, "batch-error-output-dir", "", "directory to store batch errors. Settings this will save a .csv file with the contents of the batch that failed and continue with the rest of the data.")
+	flag.BoolVar(&skipBatchErrors, "skip-batch-errors", false, "if true, the copy will continue even if a batch fails")
+
 	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert")
 	flag.Int64Var(&limit, "limit", 0, "Number of rows to insert overall; 0 means to insert all")
 	flag.IntVar(&workers, "workers", 1, "Number of parallel requests to make")
@@ -94,8 +99,10 @@ func main() {
 	if dbName != "" {
 		log.Fatalf("Error: Deprecated flag -db-name is being used. Update -connection to connect to the given database")
 	}
+	logger := &csvCopierLogger{}
+
 	opts := []csvcopy.Option{
-		csvcopy.WithLogger(&csvCopierLogger{}),
+		csvcopy.WithLogger(logger),
 		csvcopy.WithSchemaName(schemaName),
 		csvcopy.WithCopyOptions(copyOptions),
 		csvcopy.WithSplitCharacter(splitCharacter),
@@ -109,6 +116,19 @@ func main() {
 		csvcopy.WithReportingPeriod(reportingPeriod),
 		csvcopy.WithVerbose(verbose),
 	}
+
+	batchErrorHandler := csvcopy.BatchHandlerError()
+	if skipBatchErrors {
+		batchErrorHandler = csvcopy.BatchHandlerNoop()
+	}
+	if batchErrorOutputDir != "" {
+		log.Printf("batch errors will be stored at %s", batchErrorOutputDir)
+		batchErrorHandler = csvcopy.BatchHandlerSaveToFile(batchErrorOutputDir, batchErrorHandler)
+	}
+	if verbose || skipBatchErrors {
+		batchErrorHandler = csvcopy.BatchHandlerLog(logger, batchErrorHandler)
+	}
+	opts = append(opts, csvcopy.WithBatchErrorHandler(batchErrorHandler))
 
 	if skipHeader {
 		opts = append(opts,

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net"
 )
 
@@ -22,18 +23,55 @@ type Options struct {
 type Batch struct {
 	Data     net.Buffers
 	Location Location
+
+	// backup holds the same data as Data. It is used to rewind if something goes wrong
+	// Because it copies the slice, the memory is not duplicated
+	// Because we only read data, the underlaying memory is not modified either
+	backup net.Buffers
+}
+
+func NewBatch(data net.Buffers, location Location) Batch {
+	b := Batch{
+		Data:     data,
+		Location: location,
+	}
+	b.snapshot()
+	return b
+}
+
+func (b *Batch) snapshot() {
+	b.backup = net.Buffers{}
+	b.backup = append(b.backup, b.Data...)
+}
+
+// Makes data available again to read
+func (b *Batch) Rewind() {
+	b.Data = net.Buffers{}
+	b.Data = append(b.Data, b.backup...)
 }
 
 // Location positions a batch within the original data
 type Location struct {
+	// StartRow represents the index of the row where the batch starts.
+	// First row of the file is row 0
+	// The header counts as a line
 	StartRow int64
-	Length   int
+	// RowCount is the number of rows in the batch
+	RowCount int
+	// ByteOffset is the byte position in the original file.
+	// It can be used with ReadAt to process the same batch again.
+	ByteOffset int
+	// ByteLen represents the number of bytes for the batch.
+	// It can be used to know how big the batch is and read it accordingly
+	ByteLen int
 }
 
-func NewLocation(rowsRead int64, bufferedRows int, skip int) Location {
+func NewLocation(rowsRead int64, bufferedRows int, skip int, byteOffset int, byteLen int) Location {
 	return Location{
-		StartRow: rowsRead - int64(bufferedRows) + int64(skip),
-		Length:   bufferedRows,
+		StartRow:   rowsRead - int64(bufferedRows) + int64(skip) - 1, // Index rows starting at 0
+		RowCount:   bufferedRows,
+		ByteOffset: byteOffset,
+		ByteLen:    byteLen,
 	}
 }
 
@@ -49,7 +87,8 @@ func NewLocation(rowsRead int64, bufferedRows int, skip int) Location {
 // opts.Escape as the QUOTE and ESCAPE characters used for the CSV input.
 func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) error {
 	var rowsRead int64
-	reader := bufio.NewReader(r)
+	counter := &CountReader{Reader: r}
+	reader := bufio.NewReader(counter)
 
 	for skip := opts.Skip; skip > 0; {
 		// The use of ReadLine() here avoids copying or buffering data that
@@ -62,7 +101,6 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 		} else if err != nil {
 			return fmt.Errorf("skipping header: %w", err)
 		}
-
 		if !isPrefix {
 			// We pulled a full row from the buffer.
 			skip--
@@ -91,6 +129,7 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 	bufs := make(net.Buffers, 0, opts.Size)
 	var bufferedRows int
 
+	byteStart := counter.Total - reader.Buffered()
 	for {
 		eol := false
 
@@ -130,16 +169,18 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 			}
 
 			if bufferedRows >= opts.Size { // dispatch to COPY worker & reset
+				byteEnd := counter.Total - reader.Buffered()
 				select {
-				case out <- Batch{
-					Data:     bufs,
-					Location: NewLocation(rowsRead, bufferedRows, opts.Skip),
-				}:
+				case out <- NewBatch(
+					bufs,
+					NewLocation(rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
+				):
 				case <-ctx.Done():
 					return ctx.Err()
 				}
 				bufs = make(net.Buffers, 0, opts.Size)
 				bufferedRows = 0
+				byteStart = byteEnd
 			}
 		}
 
@@ -153,15 +194,17 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 
 	// Finished reading input, make sure last batch goes out.
 	if len(bufs) > 0 {
+		byteEnd := counter.Total - reader.Buffered()
 		select {
-		case out <- Batch{
-			Data:     bufs,
-			Location: NewLocation(rowsRead, bufferedRows, opts.Skip),
-		}:
+		case out <- NewBatch(
+			bufs,
+			NewLocation(rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
+		):
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
+	log.Print("total rows ", rowsRead)
 
 	return nil
 }
@@ -256,4 +299,16 @@ func (c *csvRowState) NeedsMore() bool {
 	// We don't need to check c.inEscape, because that can only be true if
 	// c.inQuote is also true.
 	return c.inQuote
+}
+
+// CountReader is a wrapper that counts how many bytes have been read from the given reader
+type CountReader struct {
+	Reader io.Reader
+	Total  int
+}
+
+func (c *CountReader) Read(b []byte) (int, error) {
+	n, err := c.Reader.Read(b)
+	c.Total += n
+	return n, err
 }

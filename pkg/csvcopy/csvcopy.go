@@ -2,7 +2,6 @@ package csvcopy
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -14,8 +13,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/timescale/timescaledb-parallel-copy/internal/batch"
 	"github.com/timescale/timescaledb-parallel-copy/internal/db"
+	"github.com/timescale/timescaledb-parallel-copy/pkg/batch"
 )
 
 const TAB_CHAR_STR = "\\t"
@@ -47,6 +46,8 @@ type Copier struct {
 	verbose           bool
 	skip              int
 	rowCount          int64
+
+	failHandler BatchErrorHandler
 }
 
 func NewCopier(
@@ -78,7 +79,7 @@ func NewCopier(
 	for _, o := range options {
 		err := o(copier)
 		if err != nil {
-			return nil, fmt.Errorf("Error processing option, %T, %w", o, err)
+			return nil, fmt.Errorf("failed to execute option %T: %w", o, err)
 		}
 	}
 
@@ -183,48 +184,56 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	rowsRead := atomic.LoadInt64(&c.rowCount)
 	rowRate := float64(rowsRead) / float64(took.Seconds())
 
-	return Result{
+	result := Result{
 		RowsRead: rowsRead,
 		Duration: took,
 		RowRate:  rowRate,
-	}, err
+	}
+
+	if err != nil {
+		return result, err
+	}
+	return result, nil
 }
 
 type ErrAtRow struct {
 	Err error
-	Row int64
+	// Row is the row reported by PgError
+	// The value is relative to the location
+	Row           int
+	BatchLocation batch.Location
 }
 
-func ErrAtRowFromPGError(pgerr *pgconn.PgError, offset int64) *ErrAtRow {
+// RowAtLocation returns the row number taking into account the batch location
+// so the number matches the original file
+func (err *ErrAtRow) RowAtLocation() int {
+	if err.Row == -1 {
+		return -1
+	}
+	return err.Row + int(err.BatchLocation.StartRow)
+}
+
+func ExtractRowFrom(pgerr *pgconn.PgError) int {
 	// Example of Where field
 	// "COPY metrics, line 1, column value: \"hello\""
 	match := regexp.MustCompile(`line (\d+)`).FindStringSubmatch(pgerr.Where)
 	if len(match) != 2 {
-		return &ErrAtRow{
-			Err: pgerr,
-			Row: -1,
-		}
+		return -1
 	}
 
 	line, err := strconv.Atoi(match[1])
 	if err != nil {
-		return &ErrAtRow{
-			Err: pgerr,
-			Row: -1,
-		}
+		return -1
 	}
 
-	return &ErrAtRow{
-		Err: pgerr,
-		Row: offset + int64(line),
-	}
+	return line
 }
 
 func (e ErrAtRow) Error() string {
 	if e.Err != nil {
-		return fmt.Sprintf("at row %d, error %s", e.Row, e.Err.Error())
+		return fmt.Sprintf("at row %d, error %s", e.RowAtLocation(), e.Err.Error())
 	}
-	return fmt.Sprintf("error at row %d", e.Row)
+	return fmt.Sprintf("error at row %d", e.RowAtLocation())
 }
 
 func (e ErrAtRow) Unwrap() error {
@@ -274,23 +283,39 @@ func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err e
 			if !ok {
 				return
 			}
+
 			start := time.Now()
 			rows, err := db.CopyFromLines(ctx, dbx, &batch.Data, copyCmd)
 			if err != nil {
-				pgErr := &pgconn.PgError{}
-				if errors.As(err, &pgErr) {
-					return ErrAtRowFromPGError(pgErr, batch.Location.StartRow)
+				err = c.handleCopyError(batch, err)
+				if err != nil {
+					return err
 				}
-				return fmt.Errorf("[BATCH] starting at row %d: %w", batch.Location.StartRow, err)
 			}
 			atomic.AddInt64(&c.rowCount, rows)
 
 			if c.logBatches {
 				took := time.Since(start)
-				fmt.Printf("[BATCH] starting at row %d, took %v, batch size %d, row rate %f/sec\n", batch.Location.StartRow, took, batch.Location.Length, float64(batch.Location.Length)/float64(took.Seconds()))
+				fmt.Printf("[BATCH] starting at row %d, took %v, batch size %d, row rate %f/sec\n", batch.Location.StartRow, took, batch.Location.RowCount, float64(batch.Location.RowCount)/float64(took.Seconds()))
 			}
 		}
 	}
+}
+func (c *Copier) handleCopyError(batch batch.Batch, err error) error {
+	errAt := &ErrAtRow{
+		Err:           err,
+		BatchLocation: batch.Location,
+	}
+	if pgerr, ok := err.(*pgconn.PgError); ok {
+		errAt.Row = ExtractRowFrom(pgerr)
+	}
+
+	if c.failHandler != nil {
+		batch.Rewind()
+		return c.failHandler(batch, errAt)
+	}
+	return errAt
+
 }
 
 // report periodically prints the write rate in number of rows per second
