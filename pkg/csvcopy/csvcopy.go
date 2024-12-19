@@ -161,7 +161,9 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	}
 
 	start := time.Now()
+	workerWg.Add(1)
 	go func() {
+		defer workerWg.Done()
 		if err := batch.Scan(ctx, reader, batchChan, opts); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
 			cancel()
