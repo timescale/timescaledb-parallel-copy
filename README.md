@@ -147,18 +147,18 @@ If you want to bulk insert data from a file named `foo.csv` into a
 
 ```bash
 # single-threaded
-$ timescaledb-parallel-copy --db-name test --table sample --file foo.csv
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table sample --file foo.csv
 
 # 2 workers
-$ timescaledb-parallel-copy --db-name test --table sample --file foo.csv \
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table sample --file foo.csv \
     --workers 2
 
 # 2 workers, report progress every 30s
-$ timescaledb-parallel-copy --db-name test --table sample --file foo.csv \
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table sample --file foo.csv \
     --workers 2 --reporting-period 30s
 
 # Treat literal string 'NULL' as NULLs:
-$ timescaledb-parallel-copy --db-name test --table sample --file foo.csv \
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table sample --file foo.csv \
     --copy-options "NULL 'NULL' CSV"
 ```
 
