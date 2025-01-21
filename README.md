@@ -147,18 +147,18 @@ If you want to bulk insert data from a file named `foo.csv` into a
 
 ```bash
 # single-threaded
-$ timescaledb-parallel-copy --db-name test --table sample --file foo.csv
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table sample --file foo.csv
 
 # 2 workers
-$ timescaledb-parallel-copy --db-name test --table sample --file foo.csv \
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table sample --file foo.csv \
     --workers 2
 
 # 2 workers, report progress every 30s
-$ timescaledb-parallel-copy --db-name test --table sample --file foo.csv \
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table sample --file foo.csv \
     --workers 2 --reporting-period 30s
 
 # Treat literal string 'NULL' as NULLs:
-$ timescaledb-parallel-copy --db-name test --table sample --file foo.csv \
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table sample --file foo.csv \
     --copy-options "NULL 'NULL' CSV"
 ```
 
@@ -168,6 +168,8 @@ Other options and flags are also available:
 $ timescaledb-parallel-copy --help
 
 Usage of timescaledb-parallel-copy:
+  -batch-error-output-dir string
+        directory to store batch errors. Settings this will save a .csv file with the contents of the batch that failed and continue with the rest of the data.
   -batch-size int
         Number of rows per insert (default 5000)
   -columns string
@@ -177,7 +179,7 @@ Usage of timescaledb-parallel-copy:
   -copy-options string
         Additional options to pass to COPY (e.g., NULL 'NULL') (default "CSV")
   -db-name string
-        Database where the destination table exists
+        (deprecated) Database where the destination table exists
   -escape character
         The ESCAPE character to use during COPY (default '"')
   -file string
@@ -194,6 +196,8 @@ Usage of timescaledb-parallel-copy:
         Period to report insert stats; if 0s, intermediate results will not be reported
   -schema string
         Destination table's schema (default "public")
+  -skip-batch-errors
+        if true, the copy will continue even if a batch fails
   -skip-header
         Skip the first line of the input
   -split string
