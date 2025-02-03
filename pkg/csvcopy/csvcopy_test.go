@@ -15,7 +15,6 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
-	"github.com/timescale/timescaledb-parallel-copy/pkg/batch"
 )
 
 func TestWriteDataToCSV(t *testing.T) {
@@ -425,7 +424,7 @@ type MockErrorHandler struct {
 	Errors map[int]error
 }
 
-func (fs *MockErrorHandler) HandleError(batch batch.Batch, reason error) error {
+func (fs *MockErrorHandler) HandleError(batch Batch, reason error) error {
 	if fs.Files == nil {
 		fs.Files = map[int]*bytes.Buffer{}
 	}
@@ -497,7 +496,7 @@ func TestFailedBatchHandlerFailure(t *testing.T) {
 
 	writer.Flush()
 
-	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithBatchSize(2), WithBatchErrorHandler(func(batch batch.Batch, err error) error {
+	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithBatchSize(2), WithBatchErrorHandler(func(batch Batch, err error) error {
 		return fmt.Errorf("couldn't handle error %w", err)
 	}))
 	require.NoError(t, err)

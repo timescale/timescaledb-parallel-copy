@@ -1,4 +1,4 @@
-package batch
+package csvcopy
 
 import (
 	"bufio"
@@ -9,14 +9,19 @@ import (
 	"net"
 )
 
-// Options contains all the configurable knobs for Scan.
-type Options struct {
+// ScanOptions contains all the configurable knobs for Scan.
+type ScanOptions struct {
 	Size  int   // maximum number of rows per batch
 	Skip  int   // how many header lines to skip at the beginning
 	Limit int64 // total number of rows to scan after the header
 
 	Quote  byte // the QUOTE character; defaults to '"'
 	Escape byte // the ESCAPE character; defaults to QUOTE
+
+	// FileID used for idempotency.
+	// If the same FileID is inserted, it will attempt to recover from a previously failed insert.
+	// If data is already inserted, it is a NOOP
+	FileID string
 }
 
 // Batch represents an operation to copy data into the DB
@@ -39,6 +44,28 @@ func NewBatch(data net.Buffers, location Location) Batch {
 	return b
 }
 
+// NewBatchFromReader used for testing purposes
+func NewBatchFromReader(r io.Reader) Batch {
+	b := Batch{}
+	buf := make([]byte, 32*1024)
+
+	for {
+		n, err := r.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			log.Fatalf("Error reading data: %v", err)
+		}
+
+		b.Location.ByteLen += n
+		// Process the data read from the buffer
+		b.Data = append(b.Data, buf[:n])
+	}
+
+	return b
+}
+
 func (b *Batch) snapshot() {
 	b.backup = net.Buffers{}
 	b.backup = append(b.backup, b.Data...)
@@ -52,6 +79,10 @@ func (b *Batch) Rewind() {
 
 // Location positions a batch within the original data
 type Location struct {
+	// FileID used for idempotency.
+	// If the same FileID is inserted, it will attempt to recover from a previously failed insert.
+	// If data is already inserted, it is a NOOP
+	FileID string
 	// StartRow represents the index of the row where the batch starts.
 	// First row of the file is row 0
 	// The header counts as a line
@@ -61,13 +92,14 @@ type Location struct {
 	// ByteOffset is the byte position in the original file.
 	// It can be used with ReadAt to process the same batch again.
 	ByteOffset int
-	// ByteLen represents the number of bytes for the batch.
+	// ByteLen represents the number of bytes for the
 	// It can be used to know how big the batch is and read it accordingly
 	ByteLen int
 }
 
-func NewLocation(rowsRead int64, bufferedRows int, skip int, byteOffset int, byteLen int) Location {
+func NewLocation(fileID string, rowsRead int64, bufferedRows int, skip int, byteOffset int, byteLen int) Location {
 	return Location{
+		FileID:     fileID,
 		StartRow:   rowsRead - int64(bufferedRows) + int64(skip) - 1, // Index rows starting at 0
 		RowCount:   bufferedRows,
 		ByteOffset: byteOffset,
@@ -85,7 +117,7 @@ func NewLocation(rowsRead int64, bufferedRows int, skip int, byteOffset int, byt
 // Scan expects the input to be in Postgres CSV format. Since this format allows
 // rows to be split over multiple lines, the caller may provide opts.Quote and
 // opts.Escape as the QUOTE and ESCAPE characters used for the CSV input.
-func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) error {
+func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts ScanOptions) error {
 	var rowsRead int64
 	counter := &CountReader{Reader: r}
 	reader := bufio.NewReader(counter)
@@ -173,7 +205,7 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 				select {
 				case out <- NewBatch(
 					bufs,
-					NewLocation(rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
+					NewLocation(opts.FileID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 				):
 				case <-ctx.Done():
 					return ctx.Err()
@@ -198,7 +230,7 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 		select {
 		case out <- NewBatch(
 			bufs,
-			NewLocation(rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
+			NewLocation(opts.FileID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 		):
 		case <-ctx.Done():
 			return ctx.Err()

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/timescale/timescaledb-parallel-copy/pkg/batch"
 )
 
 type Option func(c *Copier) error
@@ -193,12 +191,22 @@ func WithSchemaName(schema string) Option {
 // It has the batch data so it can be inspected
 // The error has the failure reason
 // If the error is not handled properly, returning an error will stop the workers
-type BatchErrorHandler func(batch batch.Batch, err error) error
+type BatchErrorHandler func(batch Batch, err error) error
 
 // WithBatchErrorHandler specifies which fail handler implementation to use
 func WithBatchErrorHandler(handler BatchErrorHandler) Option {
 	return func(c *Copier) error {
 		c.failHandler = handler
+		return nil
+	}
+}
+
+func WithFileID(id string) Option {
+	return func(c *Copier) error {
+		if id == "" {
+			return errors.New("FileID can't be empty")
+		}
+		c.fileID = id
 		return nil
 	}
 }

@@ -11,10 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/timescale/timescaledb-parallel-copy/internal/db"
-	"github.com/timescale/timescaledb-parallel-copy/pkg/batch"
 )
 
 const TAB_CHAR_STR = "\\t"
@@ -46,6 +45,7 @@ type Copier struct {
 	verbose           bool
 	skip              int
 	rowCount          int64
+	fileID            string
 
 	failHandler BatchErrorHandler
 }
@@ -74,6 +74,7 @@ func NewCopier(
 		reportingPeriod: 0,
 		verbose:         false,
 		skip:            0,
+		fileID:          uuid.NewString(),
 	}
 
 	for _, o := range options {
@@ -95,7 +96,7 @@ func NewCopier(
 }
 
 func (c *Copier) Truncate() (err error) {
-	dbx, err := db.Connect(c.connString)
+	dbx, err := connect(c.connString)
 	if err != nil {
 		return fmt.Errorf("failed to connect to the database: %w", err)
 	}
@@ -111,8 +112,13 @@ func (c *Copier) Truncate() (err error) {
 }
 
 func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
+	err := c.ensureControlTable(ctx)
+	if err != nil {
+		return Result{}, fmt.Errorf("failed to create control table, %w", err)
+	}
+
 	var workerWg sync.WaitGroup
-	batchChan := make(chan batch.Batch, c.workers*2)
+	batchChan := make(chan Batch, c.workers*2)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -145,10 +151,11 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		}()
 	}
 
-	opts := batch.Options{
-		Size:  c.batchSize,
-		Skip:  c.skip,
-		Limit: c.limit,
+	opts := ScanOptions{
+		Size:   c.batchSize,
+		Skip:   c.skip,
+		Limit:  c.limit,
+		FileID: c.fileID,
 	}
 
 	if c.quoteCharacter != "" {
@@ -164,7 +171,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		if err := batch.Scan(ctx, reader, batchChan, opts); err != nil {
+		if err := Scan(ctx, reader, batchChan, opts); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
 			cancel()
 		}
@@ -178,7 +185,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	close(errCh)
 	// We are only interested on the first error message since all other errors
 	// must probably are related to the context being canceled.
-	err := <-errCh
+	err = <-errCh
 
 	end := time.Now()
 	took := end.Sub(start)
@@ -203,7 +210,7 @@ type ErrAtRow struct {
 	// Row is the row reported by PgError
 	// The value is relative to the location
 	Row           int
-	BatchLocation batch.Location
+	BatchLocation Location
 }
 
 // RowAtLocation returns the row number taking into account the batch location
@@ -244,8 +251,8 @@ func (e ErrAtRow) Unwrap() error {
 
 // processBatches reads batches from channel c and copies them to the target
 // server while tracking stats on the write.
-func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err error) {
-	dbx, err := db.Connect(c.connString)
+func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) {
+	dbx, err := connect(c.connString)
 	if err != nil {
 		return err
 	}
@@ -287,7 +294,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err e
 			}
 
 			start := time.Now()
-			rows, err := db.CopyFromLines(ctx, dbx, &batch.Data, copyCmd)
+			rows, err := copyFromBatch(ctx, dbx, batch, copyCmd)
 			if err != nil {
 				err = c.handleCopyError(batch, err)
 				if err != nil {
@@ -303,7 +310,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan batch.Batch) (err e
 		}
 	}
 }
-func (c *Copier) handleCopyError(batch batch.Batch, err error) error {
+func (c *Copier) handleCopyError(batch Batch, err error) error {
 	errAt := &ErrAtRow{
 		Err:           err,
 		BatchLocation: batch.Location,
@@ -353,4 +360,14 @@ func (c *Copier) getFullTableName() string {
 
 func (c *Copier) GetRowCount() int64 {
 	return atomic.LoadInt64(&c.rowCount)
+}
+
+func (c *Copier) ensureControlTable(ctx context.Context) error {
+	dbx, err := connect(c.connString)
+	if err != nil {
+		return err
+	}
+	defer dbx.Close()
+
+	return ensureControlTable(ctx, dbx)
 }
