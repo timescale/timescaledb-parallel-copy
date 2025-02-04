@@ -138,12 +138,11 @@ func (tr transaction) next(ctx context.Context, conn *sqlx.Conn) (*transaction, 
 func ensureTransactionTable(ctx context.Context, conn *sqlx.Conn) error {
 	sql := `
 	CREATE TABLE IF NOT EXISTS timescaledb_parallel_copy (
-		id SERIAL PRIMARY KEY,
 		file_id TEXT NOT NULL,
 		start_row BIGINT NOT NULL,
-		row_count INT NOT NULL,
-		byte_offset INT NOT NULL,
-		byte_len INT NOT NULL,
+		row_count BIGINT NOT NULL,
+		byte_offset BIGINT NOT NULL,
+		byte_len BIGINT NOT NULL,
 		created_at TIMESTAMP NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
 		state TEXT NOT NULL DEFAULT 'pending',
