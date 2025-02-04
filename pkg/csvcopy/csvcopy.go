@@ -123,7 +123,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	// Generate COPY workers
 	for i := 0; i < c.workers; i++ {
 		workerWg.Add(1)
-		go func() {
+		go func(i int) {
 			defer workerWg.Done()
 			err := c.processBatches(ctx, batchChan)
 			if err != nil {
@@ -131,7 +131,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 				cancel()
 			}
 			c.logger.Infof("stop worker %d", i)
-		}()
+		}(i)
 
 	}
 
