@@ -55,34 +55,48 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 
 	tx, err := connx.BeginTxx(ctx, &sql.TxOptions{})
 	defer tx.Rollback()
-	tr := newTransaction(batch.Location)
+	tr := newTransactionAt(batch.Location)
 
 	err = tr.setCompleted(ctx, tx)
 	if err != nil {
-		err := tr.setFailed(ctx, connx, err.Error())
-		if err != nil {
-			err = fmt.Errorf("failed to set state to failed, %w", err)
+		handleErr := handleCopyError(ctx, db, tr, err)
+		if handleErr != nil {
+			return 0, fmt.Errorf("failed to handle error %s, failed to copy from lines %w,", handleErr, err)
 		}
 		return 0, fmt.Errorf("failed to insert control row, %w", err)
 	}
 
 	rowCount, err := copyFromLines(ctx, connx.Conn, &batch.Data, copyCmd)
 	if err != nil {
-		err := tr.setFailed(ctx, connx, err.Error())
-		if err != nil {
-			err = fmt.Errorf("failed to set state to failed, %w", err)
+		handleErr := handleCopyError(ctx, db, tr, err)
+		if handleErr != nil {
+			return rowCount, fmt.Errorf("failed to handle error %s, failed to copy from lines %w,", handleErr, err)
 		}
 		return rowCount, fmt.Errorf("failed to copy from lines %w", err)
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		err := tr.setFailed(ctx, connx, err.Error())
-		if err != nil {
-			err = fmt.Errorf("failed to set state to failed, %w", err)
+		handleErr := handleCopyError(ctx, db, tr, err)
+		if handleErr != nil {
+			return rowCount, fmt.Errorf("failed to handle error %s, failed to copy from lines %w,", handleErr, err)
 		}
 		return rowCount, err
 	}
 
 	return rowCount, nil
+}
+
+func handleCopyError(ctx context.Context, db *sqlx.DB, tr Transaction, copyErr error) error {
+	connx, err := db.Connx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to create a new connection, %w", err)
+	}
+	defer connx.Close()
+
+	err = tr.setFailed(ctx, connx, copyErr.Error())
+	if err != nil {
+		return fmt.Errorf("failed to set state to failed, %w", err)
+	}
+	return nil
 }

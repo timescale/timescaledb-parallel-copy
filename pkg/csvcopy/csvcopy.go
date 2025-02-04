@@ -239,13 +239,13 @@ func (c *Copier) checkTransaction(ctx context.Context, in <-chan Batch, out chan
 			if !ok {
 				return nil
 			}
-			tr := newTransaction(b.Location)
+			tr := newTransactionAt(b.Location)
 			row, err := tr.get(ctx, conn)
 			if err != nil {
 				return fmt.Errorf("failed to query for transaction row %w", err)
 			}
 
-			if row.State == TransactionRowStateCompleted {
+			if row != nil && row.State == TransactionRowStateCompleted {
 				c.logger.Infof("skip already completed batch, id: %s", b.Location)
 				continue
 			}

@@ -2,6 +2,8 @@ package csvcopy
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -31,7 +33,17 @@ type TransactionRow struct {
 	FailureReason *string
 }
 
-func newTransaction(loc Location) Transaction {
+// newTransaction creates a new transaction for the given fileID starting at row 0
+func newTransaction(fileID string) Transaction {
+	return Transaction{
+		loc: Location{
+			FileID: fileID,
+		},
+	}
+}
+
+// newTransaction creates a new transaction for the given fileID starting at given location.
+func newTransactionAt(loc Location) Transaction {
 	return Transaction{
 		loc: loc,
 	}
@@ -69,8 +81,9 @@ func (tr Transaction) setFailed(ctx context.Context, conn *sqlx.Conn, reason str
 	return err
 }
 
-func (tr Transaction) get(ctx context.Context, conn *sqlx.Conn) (TransactionRow, error) {
-	row := TransactionRow{}
+// get returns the row stats for the current transaction
+func (tr Transaction) get(ctx context.Context, conn *sqlx.Conn) (*TransactionRow, error) {
+	row := &TransactionRow{}
 
 	err := conn.QueryRowContext(ctx, `
 		SELECT file_id, start_row, row_count, byte_offset, byte_len, created_at, updated_at, state, failure_reason
@@ -80,12 +93,46 @@ func (tr Transaction) get(ctx context.Context, conn *sqlx.Conn) (TransactionRow,
 	`, tr.loc.FileID, tr.loc.StartRow).Scan(
 		&row.FileID, &row.StartRow, &row.RowCount, &row.ByteOffset, &row.ByteLen, &row.CreatedAt, &row.UpdatedAt, &row.State, &row.FailureReason,
 	)
-
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
 		return row, err
 	}
 
 	return row, nil
+}
+
+// next returns the next transaction in the sequence.
+// If it returns nil, it means there is no next transaction
+func (tr Transaction) next(ctx context.Context, conn *sqlx.Conn) (*Transaction, error) {
+	row := TransactionRow{}
+
+	err := conn.QueryRowContext(ctx, `
+		SELECT file_id, start_row, row_count, byte_offset, byte_len, created_at, updated_at, state, failure_reason
+		FROM timescaledb_parallel_copy
+		WHERE file_id = $1 AND start_row > $2
+		ORDER BY start_row ASC
+		LIMIT 1
+	`, tr.loc.FileID, tr.loc.StartRow).Scan(
+		&row.FileID, &row.StartRow, &row.RowCount, &row.ByteOffset, &row.ByteLen, &row.CreatedAt, &row.UpdatedAt, &row.State, &row.FailureReason,
+	)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	next := newTransactionAt(Location{
+		FileID:     row.FileID,
+		StartRow:   row.StartRow,
+		RowCount:   row.RowCount,
+		ByteOffset: row.ByteOffset,
+		ByteLen:    row.ByteLen,
+	})
+
+	return &next, nil
 }
 
 func ensureTransactionTable(ctx context.Context, conn *sqlx.Conn) error {
