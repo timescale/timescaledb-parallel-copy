@@ -118,7 +118,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errCh := make(chan error, c.workers+1)
+	errCh := make(chan error, c.workers+2)
 
 	// Generate COPY workers
 	for i := 0; i < c.workers; i++ {
@@ -130,6 +130,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 				errCh <- err
 				cancel()
 			}
+			c.logger.Infof("stop worker %d", i)
 		}()
 
 	}
@@ -171,6 +172,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 			cancel()
 		}
 		close(batchChan)
+		c.logger.Infof("stop check transaction")
 	}()
 
 	start := time.Now()
@@ -182,6 +184,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 			cancel()
 		}
 		close(scanChan)
+		c.logger.Infof("stop scan")
 	}()
 	workerWg.Wait()
 
@@ -254,7 +257,10 @@ func (c *Copier) checkTransaction(ctx context.Context, in <-chan Batch, out chan
 			if err != nil {
 				return fmt.Errorf("failed to insert transaction row %w", err)
 			}
-			out <- b
+			select {
+			case <-ctx.Done():
+			case out <- b:
+			}
 		}
 	}
 }

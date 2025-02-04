@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/timescale/timescaledb-parallel-copy/pkg/csvcopy"
 )
 
@@ -40,6 +41,7 @@ var (
 	batchErrorOutputDir string
 	skipBatchErrors     bool
 
+	importID        string
 	workers         int
 	limit           int64
 	batchSize       int
@@ -72,6 +74,7 @@ func init() {
 	flag.StringVar(&batchErrorOutputDir, "batch-error-output-dir", "", "directory to store batch errors. Settings this will save a .csv file with the contents of the batch that failed and continue with the rest of the data.")
 	flag.BoolVar(&skipBatchErrors, "skip-batch-errors", false, "if true, the copy will continue even if a batch fails")
 
+	flag.StringVar(&importID, "import-id", "", "ImportID to guarantee idempotency")
 	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert")
 	flag.Int64Var(&limit, "limit", 0, "Number of rows to insert overall; 0 means to insert all")
 	flag.IntVar(&workers, "workers", 1, "Number of parallel requests to make")
@@ -101,6 +104,12 @@ func main() {
 	}
 	logger := &csvCopierLogger{}
 
+	if importID == "" {
+		importID = uuid.NewString()
+	}
+
+	logger.Infof("Running with importID \"%s\"", importID)
+
 	opts := []csvcopy.Option{
 		csvcopy.WithLogger(logger),
 		csvcopy.WithSchemaName(schemaName),
@@ -115,6 +124,7 @@ func main() {
 		csvcopy.WithLogBatches(logBatches),
 		csvcopy.WithReportingPeriod(reportingPeriod),
 		csvcopy.WithVerbose(verbose),
+		csvcopy.WithImportID(importID),
 	}
 
 	batchErrorHandler := csvcopy.BatchHandlerError()
