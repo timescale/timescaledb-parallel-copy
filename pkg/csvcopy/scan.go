@@ -100,11 +100,15 @@ type Location struct {
 func NewLocation(fileID string, rowsRead int64, bufferedRows int, skip int, byteOffset int, byteLen int) Location {
 	return Location{
 		FileID:     fileID,
-		StartRow:   rowsRead - int64(bufferedRows) + int64(skip) - 1, // Index rows starting at 0
+		StartRow:   rowsRead - int64(bufferedRows) + int64(skip), // Index rows starting at 0
 		RowCount:   bufferedRows,
 		ByteOffset: byteOffset,
 		ByteLen:    byteLen,
 	}
+}
+
+func (l Location) String() string {
+	return fmt.Sprintf("%s:%d", l.FileID, l.StartRow)
 }
 
 // Scan reads all lines from an io.Reader, partitions them into net.Buffers with

@@ -112,13 +112,9 @@ func (c *Copier) Truncate() (err error) {
 }
 
 func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
-	err := c.ensureControlTable(ctx)
-	if err != nil {
-		return Result{}, fmt.Errorf("failed to create control table, %w", err)
-	}
-
 	var workerWg sync.WaitGroup
 	batchChan := make(chan Batch, c.workers*2)
+	scanChan := make(chan Batch, c.workers*2)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -167,15 +163,25 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		opts.Escape = c.escapeCharacter[0]
 	}
 
-	start := time.Now()
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		if err := Scan(ctx, reader, batchChan, opts); err != nil {
+		if err := c.checkTransaction(ctx, scanChan, batchChan); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
 			cancel()
 		}
 		close(batchChan)
+	}()
+
+	start := time.Now()
+	workerWg.Add(1)
+	go func() {
+		defer workerWg.Done()
+		if err := Scan(ctx, reader, scanChan, opts); err != nil {
+			errCh <- fmt.Errorf("failed reading input: %w", err)
+			cancel()
+		}
+		close(scanChan)
 	}()
 	workerWg.Wait()
 
@@ -185,7 +191,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	close(errCh)
 	// We are only interested on the first error message since all other errors
 	// must probably are related to the context being canceled.
-	err = <-errCh
+	err := <-errCh
 
 	end := time.Now()
 	took := end.Sub(start)
@@ -205,6 +211,54 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	return result, nil
 }
 
+// checkTransaction monitors all batches going to the workers
+// If the batch has never been seen before, it will record the state in the database
+// If the batch has been seen and it reached completed state, it will be skipped
+func (c *Copier) checkTransaction(ctx context.Context, in <-chan Batch, out chan Batch) error {
+	db, err := connect(c.connString)
+	if err != nil {
+		return fmt.Errorf("failed to connect to database, %w", err)
+	}
+	defer db.Close()
+	conn, err := db.Connx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire connection, %w", err)
+	}
+	defer conn.Close()
+
+	err = ensureTransactionTable(ctx, conn)
+	if err != nil {
+		return fmt.Errorf("failed to ensure transaction table exists, %w", err)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case b, ok := <-in:
+			if !ok {
+				return nil
+			}
+			tr := newTransaction(b.Location)
+			row, err := tr.get(ctx, conn)
+			if err != nil {
+				return fmt.Errorf("failed to query for transaction row %w", err)
+			}
+
+			if row.State == TransactionRowStateCompleted {
+				c.logger.Infof("skip already completed batch, id: %s", b.Location)
+				continue
+			}
+
+			err = tr.setPending(ctx, conn)
+			if err != nil {
+				return fmt.Errorf("failed to insert transaction row %w", err)
+			}
+			out <- b
+		}
+	}
+}
+
 type ErrAtRow struct {
 	Err error
 	// Row is the row reported by PgError
@@ -219,7 +273,7 @@ func (err *ErrAtRow) RowAtLocation() int {
 	if err.Row == -1 {
 		return -1
 	}
-	return err.Row + int(err.BatchLocation.StartRow)
+	return (err.Row + 1) + int(err.BatchLocation.StartRow)
 }
 
 func ExtractRowFrom(pgerr *pgconn.PgError) int {
@@ -360,14 +414,4 @@ func (c *Copier) getFullTableName() string {
 
 func (c *Copier) GetRowCount() int64 {
 	return atomic.LoadInt64(&c.rowCount)
-}
-
-func (c *Copier) ensureControlTable(ctx context.Context) error {
-	dbx, err := connect(c.connString)
-	if err != nil {
-		return err
-	}
-	defer dbx.Close()
-
-	return ensureControlTable(ctx, dbx)
 }

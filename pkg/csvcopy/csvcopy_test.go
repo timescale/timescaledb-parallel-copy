@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -42,10 +43,12 @@ func TestWriteDataToCSV(t *testing.T) {
 	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
 	require.NoError(t, err)
 
-	conn, err := pgx.Connect(ctx, connStr)
+	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
 	require.NoError(t, err)
-	defer conn.Close(ctx)
-	_, err = conn.Exec(ctx, "create table public.metrics (device_id int, label text, value float8)")
+	defer db.Close()
+	connx, err := db.Connx(ctx)
+	require.NoError(t, err)
+	_, err = connx.ExecContext(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
 
 	// Create a temporary CSV file
@@ -69,7 +72,7 @@ func TestWriteDataToCSV(t *testing.T) {
 
 	writer.Flush()
 
-	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"))
+	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithFileID("test-file-id"))
 	require.NoError(t, err)
 
 	reader, err := os.Open(tmpfile.Name())
@@ -79,25 +82,49 @@ func TestWriteDataToCSV(t *testing.T) {
 	require.NotNil(t, r)
 
 	var rowCount int64
-	err = conn.QueryRow(ctx, "select count(*) from public.metrics").Scan(&rowCount)
+	err = connx.QueryRowContext(ctx, "select count(*) from public.metrics").Scan(&rowCount)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(2), rowCount)
 	assert.Equal(t, int64(2), copier.GetRowCount())
 
-	rows, err := conn.Query(ctx, "select * from public.metrics")
+	rows, err := connx.QueryContext(ctx, "select * from public.metrics")
 	require.NoError(t, err)
 
 	hasNext := rows.Next()
 	require.True(t, hasNext)
-	results, err := rows.Values()
+	var intValue int
+	var strValue string
+	var floatValue float64
+	err = rows.Scan(&intValue, &strValue, &floatValue)
 	require.NoError(t, err)
-	assert.Equal(t, []interface{}{int32(42), "xasev", 4.2}, results)
+	assert.Equal(t, 42, intValue)
+	assert.Equal(t, "xasev", strValue)
+	assert.InDelta(t, 4.2, floatValue, 0, 01)
 
 	hasNext = rows.Next()
 	require.True(t, hasNext)
-	results, err = rows.Values()
+	err = rows.Scan(&intValue, &strValue, &floatValue)
 	require.NoError(t, err)
-	assert.Equal(t, []interface{}{int32(24), "qased", 2.4}, results)
+	assert.Equal(t, 24, intValue)
+	assert.Equal(t, "qased", strValue)
+	assert.InDelta(t, 2.4, floatValue, 0, 01)
+
+	rows.Close()
+
+	controlRow, err := newTransaction(Location{
+		FileID:     "test-file-id",
+		StartRow:   0,
+		RowCount:   2,
+		ByteOffset: 0,
+	}).get(ctx, connx)
+	require.NoError(t, err)
+	assert.Equal(t, controlRow.State, TransactionRowStateCompleted)
+	assert.Equal(t, controlRow.FileID, "test-file-id")
+	assert.Equal(t, controlRow.StartRow, int64(0))
+	assert.Equal(t, controlRow.RowCount, 2)
+	assert.Equal(t, controlRow.ByteOffset, 0)
+	assert.Equal(t, controlRow.ByteLen, 26)
+	assert.Greater(t, controlRow.UpdatedAt.UnixNano(), controlRow.CreatedAt.UnixNano())
 }
 
 func TestErrorAtRow(t *testing.T) {
@@ -410,13 +437,13 @@ func TestFailedBatchHandler(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 4, result.RowsRead)
 
-	require.Contains(t, fs.Files, 1)
-	require.Equal(t, fs.Files[1].String(), "24,qased,2.4\n24,qased,hello\n")
-	require.Contains(t, fs.Errors, 1)
-	assert.EqualValues(t, fs.Errors[1].(*ErrAtRow).RowAtLocation(), 3)
-	assert.EqualValues(t, fs.Errors[1].(*ErrAtRow).BatchLocation.RowCount, 2)
-	assert.EqualValues(t, fs.Errors[1].(*ErrAtRow).BatchLocation.ByteOffset, 26)
-	assert.EqualValues(t, fs.Errors[1].(*ErrAtRow).BatchLocation.ByteLen, len("24,qased,2.4\n24,qased,hello\n"))
+	require.Contains(t, fs.Files, 2)
+	require.Equal(t, fs.Files[2].String(), "24,qased,2.4\n24,qased,hello\n")
+	require.Contains(t, fs.Errors, 2)
+	assert.EqualValues(t, fs.Errors[2].(*ErrAtRow).RowAtLocation(), 3)
+	assert.EqualValues(t, fs.Errors[2].(*ErrAtRow).BatchLocation.RowCount, 2)
+	assert.EqualValues(t, fs.Errors[2].(*ErrAtRow).BatchLocation.ByteOffset, 26)
+	assert.EqualValues(t, fs.Errors[2].(*ErrAtRow).BatchLocation.ByteLen, len("24,qased,2.4\n24,qased,hello\n"))
 }
 
 type MockErrorHandler struct {
