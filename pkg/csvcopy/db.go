@@ -94,7 +94,7 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 	return rowCount, nil
 }
 
-func handleCopyError(ctx context.Context, db *sqlx.DB, tr Transaction, copyErr error) error {
+func handleCopyError(ctx context.Context, db *sqlx.DB, tr transaction, copyErr error) error {
 	connx, err := db.Connx(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create a new connection, %w", err)

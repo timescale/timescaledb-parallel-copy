@@ -1,4 +1,4 @@
-package csvcopy_test
+package csvcopy
 
 import (
 	"bytes"
@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/timescale/timescaledb-parallel-copy/pkg/csvcopy"
 	"golang.org/x/exp/rand"
 )
 
@@ -241,7 +240,7 @@ d"
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			rowChan := make(chan csvcopy.Batch)
+			rowChan := make(chan Batch)
 			resultChan := make(chan []string)
 
 			// Collector for the scanned row batches.
@@ -257,7 +256,7 @@ d"
 
 			all := strings.Join(c.input, "\n")
 			reader := strings.NewReader(all)
-			opts := csvcopy.ScanOptions{
+			opts := scanOptions{
 				Size:   c.size,
 				Skip:   c.skip,
 				Limit:  c.limit,
@@ -265,7 +264,7 @@ d"
 				Escape: byte(c.escape),
 			}
 
-			err := csvcopy.Scan(context.Background(), reader, rowChan, opts)
+			err := scan(context.Background(), reader, rowChan, opts)
 			if err != nil {
 				t.Fatalf("Scan() returned error: %v", err)
 			}
@@ -304,13 +303,13 @@ d"
 				should be discarded
 			`), expected)
 
-			rowChan := make(chan csvcopy.Batch, 1)
-			opts := csvcopy.ScanOptions{
+			rowChan := make(chan Batch, 1)
+			opts := scanOptions{
 				Size: 50,
 				Skip: c.skip,
 			}
 
-			err := csvcopy.Scan(context.Background(), reader, rowChan, opts)
+			err := scan(context.Background(), reader, rowChan, opts)
 			if !errors.Is(err, expected) {
 				t.Errorf("Scan() returned unexpected error: %v", err)
 				t.Logf("want: %v", expected)
@@ -396,7 +395,7 @@ func BenchmarkScan(b *testing.B) {
 		// Real-world cases need thousands of lines per batch to perform well.
 		// parallel-copy defaults to 5000, so that seems like a good number to
 		// start optimizing here.
-		opts := csvcopy.ScanOptions{
+		opts := scanOptions{
 			Size: 5000,
 		}
 		data := strings.Repeat(bm.line+"\n", opts.Size)
@@ -413,13 +412,13 @@ func BenchmarkScan(b *testing.B) {
 			b.Run(name, func(b *testing.B) {
 				// Make sure our output channel won't block. This relies on each
 				// call to Scan() producing exactly one
-				rowChan := make(chan csvcopy.Batch, b.N)
+				rowChan := make(chan Batch, b.N)
 				b.ResetTimer()
 
 				for i := 0; i < b.N; i++ {
 					reader.Reset(data) // rewind to the beginning
 
-					err := csvcopy.Scan(context.Background(), reader, rowChan, opts)
+					err := scan(context.Background(), reader, rowChan, opts)
 					if err != nil {
 						b.Errorf("Scan() returned unexpected error: %v", err)
 					}
@@ -446,7 +445,7 @@ func TestRewind(t *testing.T) {
 	randomData := RandString(5000)
 	data := net.Buffers(bytes.Split([]byte(randomData), []byte(",")))
 
-	batch := csvcopy.NewBatch(data, csvcopy.NewLocation("test-id", 0, 0, 0, 0, 0))
+	batch := newBatch(data, newLocation("test-id", 0, 0, 0, 0, 0))
 
 	var err error
 	// reads all the data

@@ -9,19 +9,19 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-type Transaction struct {
+type transaction struct {
 	loc Location
 }
 
-type TransactionRowState string
+type transactionRowState string
 
 const (
-	TransactionRowStatePending   TransactionRowState = "pending"
-	TransactionRowStateCompleted TransactionRowState = "completed"
-	TransactionRowStateFailed    TransactionRowState = "failed"
+	transactionRowStatePending   transactionRowState = "pending"
+	transactionRowStateCompleted transactionRowState = "completed"
+	transactionRowStateFailed    transactionRowState = "failed"
 )
 
-type TransactionRow struct {
+type transactionRow struct {
 	FileID        string
 	StartRow      int64
 	RowCount      int
@@ -29,13 +29,13 @@ type TransactionRow struct {
 	ByteLen       int
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
-	State         TransactionRowState
+	State         transactionRowState
 	FailureReason *string
 }
 
 // newTransaction creates a new transaction for the given fileID starting at row 0
-func newTransaction(fileID string) Transaction {
-	return Transaction{
+func newTransaction(fileID string) transaction {
+	return transaction{
 		loc: Location{
 			FileID: fileID,
 		},
@@ -43,13 +43,13 @@ func newTransaction(fileID string) Transaction {
 }
 
 // newTransaction creates a new transaction for the given fileID starting at given location.
-func newTransactionAt(loc Location) Transaction {
-	return Transaction{
+func newTransactionAt(loc Location) transaction {
+	return transaction{
 		loc: loc,
 	}
 }
 
-func (tr Transaction) setPending(ctx context.Context, conn *sqlx.Conn) error {
+func (tr transaction) setPending(ctx context.Context, conn *sqlx.Conn) error {
 	sql := `
 	INSERT INTO timescaledb_parallel_copy (
 		file_id, start_row, row_count, byte_offset, byte_len,
@@ -61,7 +61,7 @@ func (tr Transaction) setPending(ctx context.Context, conn *sqlx.Conn) error {
 	return err
 }
 
-func (tr Transaction) setCompleted(ctx context.Context, tx *sqlx.Tx) error {
+func (tr transaction) setCompleted(ctx context.Context, tx *sqlx.Tx) error {
 	sql := `
 	UPDATE timescaledb_parallel_copy
 	SET state = 'completed', failure_reason = NULL, updated_at = NOW()
@@ -71,7 +71,7 @@ func (tr Transaction) setCompleted(ctx context.Context, tx *sqlx.Tx) error {
 	return err
 }
 
-func (tr Transaction) setFailed(ctx context.Context, conn *sqlx.Conn, reason string) error {
+func (tr transaction) setFailed(ctx context.Context, conn *sqlx.Conn, reason string) error {
 	sql := `
 	UPDATE timescaledb_parallel_copy
 	SET state = 'failed', failure_reason = $1, updated_at = NOW()
@@ -82,8 +82,8 @@ func (tr Transaction) setFailed(ctx context.Context, conn *sqlx.Conn, reason str
 }
 
 // get returns the row stats for the current transaction
-func (tr Transaction) get(ctx context.Context, conn *sqlx.Conn) (*TransactionRow, error) {
-	row := &TransactionRow{}
+func (tr transaction) get(ctx context.Context, conn *sqlx.Conn) (*transactionRow, error) {
+	row := &transactionRow{}
 
 	err := conn.QueryRowContext(ctx, `
 		SELECT file_id, start_row, row_count, byte_offset, byte_len, created_at, updated_at, state, failure_reason
@@ -105,8 +105,8 @@ func (tr Transaction) get(ctx context.Context, conn *sqlx.Conn) (*TransactionRow
 
 // next returns the next transaction in the sequence.
 // If it returns nil, it means there is no next transaction
-func (tr Transaction) next(ctx context.Context, conn *sqlx.Conn) (*Transaction, error) {
-	row := TransactionRow{}
+func (tr transaction) next(ctx context.Context, conn *sqlx.Conn) (*transaction, error) {
+	row := transactionRow{}
 
 	err := conn.QueryRowContext(ctx, `
 		SELECT file_id, start_row, row_count, byte_offset, byte_len, created_at, updated_at, state, failure_reason

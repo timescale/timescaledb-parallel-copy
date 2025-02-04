@@ -9,8 +9,8 @@ import (
 	"net"
 )
 
-// ScanOptions contains all the configurable knobs for Scan.
-type ScanOptions struct {
+// scanOptions contains all the configurable knobs for Scan.
+type scanOptions struct {
 	Size  int   // maximum number of rows per batch
 	Skip  int   // how many header lines to skip at the beginning
 	Limit int64 // total number of rows to scan after the header
@@ -35,7 +35,7 @@ type Batch struct {
 	backup net.Buffers
 }
 
-func NewBatch(data net.Buffers, location Location) Batch {
+func newBatch(data net.Buffers, location Location) Batch {
 	b := Batch{
 		Data:     data,
 		Location: location,
@@ -44,8 +44,8 @@ func NewBatch(data net.Buffers, location Location) Batch {
 	return b
 }
 
-// NewBatchFromReader used for testing purposes
-func NewBatchFromReader(r io.Reader) Batch {
+// newBatchFromReader used for testing purposes
+func newBatchFromReader(r io.Reader) Batch {
 	b := Batch{}
 	buf := make([]byte, 32*1024)
 
@@ -97,7 +97,7 @@ type Location struct {
 	ByteLen int
 }
 
-func NewLocation(fileID string, rowsRead int64, bufferedRows int, skip int, byteOffset int, byteLen int) Location {
+func newLocation(fileID string, rowsRead int64, bufferedRows int, skip int, byteOffset int, byteLen int) Location {
 	return Location{
 		FileID:     fileID,
 		StartRow:   rowsRead - int64(bufferedRows) + int64(skip), // Index rows starting at 0
@@ -111,17 +111,17 @@ func (l Location) String() string {
 	return fmt.Sprintf("%s:%d", l.FileID, l.StartRow)
 }
 
-// Scan reads all lines from an io.Reader, partitions them into net.Buffers with
+// scan reads all lines from an io.Reader, partitions them into net.Buffers with
 // opts.Size rows each, and writes each batch to the out channel. If opts.Skip
 // is greater than zero, that number of lines will be discarded from the
-// beginning of the data. If opts.Limit is greater than zero, then Scan will
+// beginning of the data. If opts.Limit is greater than zero, then scan will
 // stop once it has written that number of rows, across all batches, to the
 // channel.
 //
-// Scan expects the input to be in Postgres CSV format. Since this format allows
+// scan expects the input to be in Postgres CSV format. Since this format allows
 // rows to be split over multiple lines, the caller may provide opts.Quote and
 // opts.Escape as the QUOTE and ESCAPE characters used for the CSV input.
-func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts ScanOptions) error {
+func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) error {
 	var rowsRead int64
 	counter := &CountReader{Reader: r}
 	reader := bufio.NewReader(counter)
@@ -207,9 +207,9 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts ScanOptions) 
 			if bufferedRows >= opts.Size { // dispatch to COPY worker & reset
 				byteEnd := counter.Total - reader.Buffered()
 				select {
-				case out <- NewBatch(
+				case out <- newBatch(
 					bufs,
-					NewLocation(opts.FileID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
+					newLocation(opts.FileID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 				):
 				case <-ctx.Done():
 					return ctx.Err()
@@ -232,9 +232,9 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts ScanOptions) 
 	if len(bufs) > 0 {
 		byteEnd := counter.Total - reader.Buffered()
 		select {
-		case out <- NewBatch(
+		case out <- newBatch(
 			bufs,
-			NewLocation(opts.FileID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
+			newLocation(opts.FileID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 		):
 		case <-ctx.Done():
 			return ctx.Err()

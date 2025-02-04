@@ -72,7 +72,7 @@ func TestWriteDataToCSV(t *testing.T) {
 
 	writer.Flush()
 
-	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithFileID("test-file-id"))
+	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithImportID("test-file-id"))
 	require.NoError(t, err)
 
 	reader, err := os.Open(tmpfile.Name())
@@ -113,7 +113,7 @@ func TestWriteDataToCSV(t *testing.T) {
 
 	controlRow, err := newTransaction("test-file-id").get(ctx, connx)
 	require.NoError(t, err)
-	assert.Equal(t, controlRow.State, TransactionRowStateCompleted)
+	assert.Equal(t, controlRow.State, transactionRowStateCompleted)
 	assert.Equal(t, controlRow.FileID, "test-file-id")
 	assert.Equal(t, controlRow.StartRow, int64(0))
 	assert.Equal(t, controlRow.RowCount, 2)
@@ -595,7 +595,7 @@ func TestTransactionState(t *testing.T) {
 		WithColumns("device_id,label,value"),
 		WithBatchSize(2),
 		WithBatchErrorHandler(BatchHandlerNoop()),
-		WithFileID("test-file-id"),
+		WithImportID("test-file-id"),
 	)
 	require.NoError(t, err)
 	reader, err := os.Open(tmpfile.Name())
@@ -611,7 +611,7 @@ func TestTransactionState(t *testing.T) {
 		assert.Equal(t, "test-file-id", row.FileID)
 		assert.Equal(t, int64(0), row.StartRow)
 		assert.Equal(t, 2, row.RowCount)
-		assert.Equal(t, TransactionRowStateCompleted, row.State)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
 	}
 	batch2, err := batch1.next(ctx, connx)
 	require.NoError(t, err)
@@ -621,7 +621,7 @@ func TestTransactionState(t *testing.T) {
 		assert.Equal(t, "test-file-id", row.FileID)
 		assert.Equal(t, int64(2), row.StartRow)
 		assert.Equal(t, 2, row.RowCount)
-		assert.Equal(t, TransactionRowStateFailed, row.State)
+		assert.Equal(t, transactionRowStateFailed, row.State)
 		assert.NotEmpty(t, row.FailureReason)
 	}
 	batch3, err := batch2.next(ctx, connx)
@@ -632,7 +632,7 @@ func TestTransactionState(t *testing.T) {
 		assert.Equal(t, "test-file-id", row.FileID)
 		assert.Equal(t, int64(4), row.StartRow)
 		assert.Equal(t, 2, row.RowCount)
-		assert.Equal(t, TransactionRowStateCompleted, row.State)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
 	}
 	batch4, err := batch3.next(ctx, connx)
 	require.NoError(t, err)
@@ -705,7 +705,7 @@ func TestTransactionIdempotency(t *testing.T) {
 		WithColumns("device_id,label,value"),
 		WithBatchSize(2),
 		WithBatchErrorHandler(BatchHandlerNoop()),
-		WithFileID("test-file-id"),
+		WithImportID("test-file-id"),
 	)
 	require.NoError(t, err)
 	reader, err := os.Open(tmpfile.Name())
@@ -720,21 +720,21 @@ func TestTransactionIdempotency(t *testing.T) {
 	{
 		row, err := batch1.get(ctx, connx)
 		require.NoError(t, err)
-		assert.Equal(t, TransactionRowStateCompleted, row.State)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
 	}
 	batch2, err := batch1.next(ctx, connx)
 	require.NoError(t, err)
 	{
 		row, err := batch2.get(ctx, connx)
 		require.NoError(t, err)
-		assert.Equal(t, TransactionRowStateFailed, row.State)
+		assert.Equal(t, transactionRowStateFailed, row.State)
 	}
 	batch3, err := batch2.next(ctx, connx)
 	require.NoError(t, err)
 	{
 		row, err := batch3.get(ctx, connx)
 		require.NoError(t, err)
-		assert.Equal(t, TransactionRowStateCompleted, row.State)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
 	}
 
 	err = tmpfile.Truncate(0)
@@ -765,7 +765,7 @@ func TestTransactionIdempotency(t *testing.T) {
 		WithColumns("device_id,label,value"),
 		WithBatchSize(2),
 		WithBatchErrorHandler(BatchHandlerNoop()),
-		WithFileID("test-file-id"),
+		WithImportID("test-file-id"),
 	)
 	require.NoError(t, err)
 
@@ -778,21 +778,21 @@ func TestTransactionIdempotency(t *testing.T) {
 	{
 		row, err := batch1.get(ctx, connx)
 		require.NoError(t, err)
-		assert.Equal(t, TransactionRowStateCompleted, row.State)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
 	}
 	batch2, err = batch1.next(ctx, connx)
 	require.NoError(t, err)
 	{
 		row, err := batch2.get(ctx, connx)
 		require.NoError(t, err)
-		assert.Equal(t, TransactionRowStateCompleted, row.State)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
 	}
 	batch3, err = batch2.next(ctx, connx)
 	require.NoError(t, err)
 	{
 		row, err := batch3.get(ctx, connx)
 		require.NoError(t, err)
-		assert.Equal(t, TransactionRowStateCompleted, row.State)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
 	}
 
 	var total int

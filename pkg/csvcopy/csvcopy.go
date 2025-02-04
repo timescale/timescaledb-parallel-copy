@@ -45,7 +45,7 @@ type Copier struct {
 	verbose           bool
 	skip              int
 	rowCount          int64
-	fileID            string
+	importID          string
 
 	failHandler BatchErrorHandler
 }
@@ -74,7 +74,7 @@ func NewCopier(
 		reportingPeriod: 0,
 		verbose:         false,
 		skip:            0,
-		fileID:          uuid.NewString(),
+		importID:        uuid.NewString(),
 	}
 
 	for _, o := range options {
@@ -147,11 +147,11 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		}()
 	}
 
-	opts := ScanOptions{
+	opts := scanOptions{
 		Size:   c.batchSize,
 		Skip:   c.skip,
 		Limit:  c.limit,
-		FileID: c.fileID,
+		FileID: c.importID,
 	}
 
 	if c.quoteCharacter != "" {
@@ -177,7 +177,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		if err := Scan(ctx, reader, scanChan, opts); err != nil {
+		if err := scan(ctx, reader, scanChan, opts); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
 			cancel()
 		}
@@ -245,7 +245,7 @@ func (c *Copier) checkTransaction(ctx context.Context, in <-chan Batch, out chan
 				return fmt.Errorf("failed to query for transaction row %w", err)
 			}
 
-			if row != nil && row.State == TransactionRowStateCompleted {
+			if row != nil && row.State == transactionRowStateCompleted {
 				c.logger.Infof("skip already completed batch, id: %s", b.Location)
 				continue
 			}

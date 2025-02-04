@@ -201,12 +201,29 @@ func WithBatchErrorHandler(handler BatchErrorHandler) Option {
 	}
 }
 
-func WithFileID(id string) Option {
+// WithImportID specifies the ID for the import operation to guarantee idempotency
+// The tool will keep track of every batch to insert in the database and update the
+// status according to the result of the operation.
+// This information can be used to recover in case of an abrupt stop or just to resume
+// the operation after a graceful stop before the entire file was processed
+//
+// Usage: For every unique file that has to be inserted in the database, generate an
+// unique identifier. As long as configuration remains the same,
+// It is safe to run the same command multiple times.
+// It is NOT safe to run concurrently for the same ID.
+//
+// Note: Using the same import id has the following expectation
+// - The input file will be the same
+// - The batch size will be the same
+//
+// If those expectation are not met, the behaviour of the tool is not specified and
+// will provably end up inserting duplicate records.
+func WithImportID(id string) Option {
 	return func(c *Copier) error {
 		if id == "" {
-			return errors.New("FileID can't be empty")
+			return errors.New("importID can't be empty")
 		}
-		c.fileID = id
+		c.importID = id
 		return nil
 	}
 }
