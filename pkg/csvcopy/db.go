@@ -54,7 +54,14 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 	defer connx.Close()
 
 	tx, err := connx.BeginTxx(ctx, &sql.TxOptions{})
-	defer tx.Rollback()
+	if err != nil {
+		return 0, fmt.Errorf("failed to start transaction: %w", err)
+	}
+
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
 	tr := newTransactionAt(batch.Location)
 
 	err = tr.setCompleted(ctx, tx)
