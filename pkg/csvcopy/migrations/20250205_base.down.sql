@@ -1,1 +1,1 @@
-DROP TABLE timescaledb_parallel_copy
+DROP TABLE timescaledb_parallel_copy_transactions

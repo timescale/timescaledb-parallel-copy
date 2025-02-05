@@ -1,4 +1,4 @@
-CREATE TABLE timescaledb_parallel_copy (
+CREATE TABLE timescaledb_parallel_copy_transactions (
     file_id TEXT NOT NULL,
     start_row BIGINT NOT NULL,
     row_count BIGINT NOT NULL,

@@ -60,7 +60,7 @@ func newTransactionAt(loc Location) *Transaction {
 
 func (tr Transaction) setCompleted(ctx context.Context, conn sqlx.ExecerContext) error {
 	sql := `
-	INSERT INTO timescaledb_parallel_copy (
+	INSERT INTO timescaledb_parallel_copy_transactions (
 		file_id, start_row, row_count, byte_offset, byte_len,
 		created_at, state, failure_reason
 	)
@@ -72,7 +72,7 @@ func (tr Transaction) setCompleted(ctx context.Context, conn sqlx.ExecerContext)
 
 func (tr Transaction) setFailed(ctx context.Context, conn sqlx.ExecerContext, reason string) error {
 	sql := `
-	INSERT INTO timescaledb_parallel_copy (
+	INSERT INTO timescaledb_parallel_copy_transactions (
 		file_id, start_row, row_count, byte_offset, byte_len,
 		created_at, state, failure_reason
 	)
@@ -92,7 +92,7 @@ func getTransactionRow(ctx context.Context, conn sqlx.QueryerContext, fileID str
 
 	err := conn.QueryRowxContext(ctx, `
 		SELECT file_id, start_row, row_count, byte_offset, byte_len, created_at, state, failure_reason
-		FROM timescaledb_parallel_copy
+		FROM timescaledb_parallel_copy_transactions
 		WHERE file_id = $1 AND start_row = $2
 		LIMIT 1
 	`, fileID, startRow).Scan(
@@ -115,7 +115,7 @@ func (tr Transaction) Next(ctx context.Context, conn sqlx.QueryerContext) (*Tran
 
 	err := conn.QueryRowxContext(ctx, `
 		SELECT file_id, start_row, row_count, byte_offset, byte_len, created_at, state, failure_reason
-		FROM timescaledb_parallel_copy
+		FROM timescaledb_parallel_copy_transactions
 		WHERE file_id = $1 AND start_row > $2
 		ORDER BY start_row ASC
 		LIMIT 1
@@ -143,7 +143,7 @@ func (tr Transaction) Next(ctx context.Context, conn sqlx.QueryerContext) (*Tran
 //go:embed migrations/*
 var migrations embed.FS
 
-const DefaultMultiStatementMaxSize = 10 * 1 << 20 // 10 MB
+const defaultMultiStatementMaxSize = 10 * 1 << 20 // 10 MB
 
 func ensureTransactionTable(connString string) error {
 	dbx, err := connect(connString)
@@ -160,7 +160,7 @@ func ensureTransactionTable(connString string) error {
 	instance, err := pgx.WithInstance(dbx.DB, &pgx.Config{
 		MigrationsTable:       "timescaledb_parallel_copy_migrations",
 		StatementTimeout:      10 * time.Second,
-		MultiStatementMaxSize: DefaultMultiStatementMaxSize,
+		MultiStatementMaxSize: defaultMultiStatementMaxSize,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create target db instance, %w", err)
