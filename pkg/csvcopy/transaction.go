@@ -17,7 +17,6 @@ type Transaction struct {
 type transactionRowState string
 
 const (
-	transactionRowStatePending   transactionRowState = "pending"
 	transactionRowStateCompleted transactionRowState = "completed"
 	transactionRowStateFailed    transactionRowState = "failed"
 )
