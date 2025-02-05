@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
+)
+
+var (
+	ErrBatchAlreadyProcessed = errors.New("batch already processed")
 )
 
 // connect returns a SQLX database corresponding to the provided connection
@@ -68,57 +71,21 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 
 	err = tr.setCompleted(ctx, tx)
 	if err != nil {
+		if isDuplicateKeyError(err) {
+			return 0, ErrBatchAlreadyProcessed
+		}
 		return 0, fmt.Errorf("failed to insert control row, %w", err)
 	}
 
 	rowCount, err := copyFromLines(ctx, connx.Conn, &batch.Data, copyCmd)
 	if err != nil {
-		handleErr := handleCopyError(ctx, db, tr, err)
-		if handleErr != nil {
-			return rowCount, fmt.Errorf("failed to handle error %s, failed to copy from lines %w,", handleErr, err)
-		}
 		return rowCount, fmt.Errorf("failed to copy from lines %w", err)
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		handleErr := handleCopyError(ctx, db, tr, err)
-		if handleErr != nil {
-			return rowCount, fmt.Errorf("failed to handle error %s, failed to copy from lines %w,", handleErr, err)
-		}
 		return rowCount, err
 	}
 
 	return rowCount, nil
-}
-
-func handleCopyError(ctx context.Context, db *sqlx.DB, tr *Transaction, copyErr error) error {
-	if isTemporaryError(copyErr) {
-		return nil
-	}
-
-	connx, err := db.Connx(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to create a new connection, %w", err)
-	}
-	defer connx.Close()
-
-	err = tr.setFailed(ctx, connx, copyErr.Error())
-	if err != nil {
-		return fmt.Errorf("failed to set state to failed, %w", err)
-	}
-	return nil
-}
-
-func isTemporaryError(err error) bool {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
-		// Temporary errors: connection failures, resource issues
-		if pgErr.Code[:2] == "08" {
-			return true
-		}
-		// Consider other cases as needed for temporary errors
-	}
-	// Check for Go-specific transient errors
-	return errors.Is(err, context.DeadlineExceeded)
 }

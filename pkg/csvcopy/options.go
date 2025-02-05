@@ -187,10 +187,39 @@ func WithSchemaName(schema string) Option {
 	}
 }
 
+func NewErrContinue(err error) BatchError {
+	return BatchError{
+		Continue: true,
+		Err:      err,
+	}
+}
+
+func NewErrStop(err error) BatchError {
+	return BatchError{
+		Continue: false,
+		Err:      err,
+	}
+}
+
+type BatchError struct {
+	Continue bool
+	Err      error
+}
+
+func (err BatchError) Error() string {
+	return fmt.Sprintf("continue: %t, %s", err.Continue, err.Err)
+}
+
+func (err BatchError) Unwrap() error {
+	return err.Err
+}
+
 // BatchErrorHandler is how batch errors are handled
 // It has the batch data so it can be inspected
 // The error has the failure reason
 // If the error is not handled properly, returning an error will stop the workers
+// If ErrContinue is returned, the batch will be marked as failed but continue processing
+// if ErrStop is returned, the processing will stop
 type BatchErrorHandler func(batch Batch, err error) error
 
 // WithBatchErrorHandler specifies which fail handler implementation to use

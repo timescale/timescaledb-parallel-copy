@@ -1,0 +1,1 @@
+DROP TABLE timescaledb_parallel_copy

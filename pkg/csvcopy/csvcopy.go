@@ -2,6 +2,7 @@ package csvcopy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jmoiron/sqlx"
 )
 
 const TAB_CHAR_STR = "\\t"
@@ -113,8 +115,8 @@ func (c *Copier) Truncate() (err error) {
 
 func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 
-	if err := c.ensureTransactionTable(ctx); err != nil {
-		return Result{}, fmt.Errorf("failed to ensure transaction table")
+	if err := ensureTransactionTable(c.connString); err != nil {
+		return Result{}, fmt.Errorf("failed to ensure transaction table, %w", err)
 	}
 
 	var workerWg sync.WaitGroup
@@ -205,25 +207,6 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		return result, err
 	}
 	return result, nil
-}
-
-func (c *Copier) ensureTransactionTable(ctx context.Context) error {
-	db, err := connect(c.connString)
-	if err != nil {
-		return fmt.Errorf("failed to connect to database, %w", err)
-	}
-	defer db.Close()
-	conn, err := db.Connx(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to acquire connection, %w", err)
-	}
-	defer conn.Close()
-
-	err = ensureTransactionTable(ctx, conn)
-	if err != nil {
-		return fmt.Errorf("failed to ensure transaction table exists, %w", err)
-	}
-	return nil
 }
 
 type ErrAtRow struct {
@@ -317,7 +300,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) 
 			start := time.Now()
 			rows, err := copyFromBatch(ctx, dbx, batch, copyCmd)
 			if err != nil {
-				err = c.handleCopyError(batch, err)
+				err = c.handleCopyError(ctx, dbx, batch, err)
 				if err != nil {
 					return err
 				}
@@ -331,21 +314,81 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) 
 		}
 	}
 }
-func (c *Copier) handleCopyError(batch Batch, err error) error {
+
+func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, copyErr error) error {
 	errAt := &ErrAtRow{
-		Err:           err,
+		Err:           copyErr,
 		BatchLocation: batch.Location,
 	}
-	if pgerr, ok := err.(*pgconn.PgError); ok {
+	if pgerr, ok := copyErr.(*pgconn.PgError); ok {
 		errAt.Row = ExtractRowFrom(pgerr)
 	}
 
+	if errors.Is(copyErr, ErrBatchAlreadyProcessed) {
+		c.logger.Infof("skip batch %s already processed", batch.Location)
+		return nil
+	}
+
+	var failHandlerError error
+	// If failHandler is defined, attempt to handle the error
 	if c.failHandler != nil {
 		batch.Rewind()
-		return c.failHandler(batch, errAt)
+		failHandlerError = c.failHandler(batch, errAt)
+	} else {
+		failHandlerError = errAt
 	}
-	return errAt
+	if failHandlerError == nil {
+		return nil
+	}
 
+	c.logger.Infof("handling error %#v", failHandlerError)
+	// Temporal errors should not set batch as failed
+	if isTemporaryError(failHandlerError) {
+		return nil
+	}
+
+	connx, err := db.Connx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to connect to database")
+	}
+	defer connx.Close()
+
+	tr := newTransactionAt(batch.Location)
+	err = tr.setFailed(ctx, connx, failHandlerError.Error())
+	if err != nil {
+		if !isDuplicateKeyError(err) {
+			return fmt.Errorf("failed to set state to failed, %w", err)
+		}
+	}
+
+	batchError := BatchError{}
+	if !errors.As(failHandlerError, &batchError) && !batchError.Continue {
+		return failHandlerError
+	}
+
+	return nil
+
+}
+
+func isTemporaryError(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		// Temporary errors: connection failures, resource issues
+		if pgErr.Code[:2] == "08" {
+			return true
+		}
+		// Consider other cases as needed for temporary errors
+	}
+	// Check for Go-specific transient errors
+	return errors.Is(err, context.DeadlineExceeded)
+}
+
+func isDuplicateKeyError(err error) bool {
+	pgerr, ok := err.(*pgconn.PgError)
+	if !ok {
+		return false
+	}
+	return pgerr.Code == "23505" // Duplicate key error
 }
 
 // report periodically prints the write rate in number of rows per second

@@ -33,7 +33,7 @@ func BatchHandlerSaveToFile(dir string, next BatchErrorHandler) BatchErrorHandle
 		if next != nil {
 			return next(batch, reason)
 		}
-		return nil
+		return NewErrContinue(reason)
 	})
 }
 
@@ -45,16 +45,16 @@ func BatchHandlerLog(log Logger, next BatchErrorHandler) BatchErrorHandler {
 		if next != nil {
 			return next(batch, reason)
 		}
-		return nil
+		return NewErrContinue(reason)
 	})
 }
 
 // BatchHandlerNoop no operation
 func BatchHandlerNoop() BatchErrorHandler {
-	return BatchErrorHandler(func(_ Batch, _ error) error { return nil })
+	return BatchErrorHandler(func(_ Batch, reason error) error { return NewErrContinue(reason) })
 }
 
 // BatchHandlerError fails the process
 func BatchHandlerError() BatchErrorHandler {
-	return BatchErrorHandler(func(_ Batch, err error) error { return err })
+	return BatchErrorHandler(func(_ Batch, reason error) error { return NewErrStop(reason) })
 }
