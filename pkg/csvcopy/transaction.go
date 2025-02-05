@@ -4,12 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jmoiron/sqlx"
 )
 
-type transaction struct {
+type Transaction struct {
 	loc Location
 }
 
@@ -21,77 +22,90 @@ const (
 	transactionRowStateFailed    transactionRowState = "failed"
 )
 
-type transactionRow struct {
+type TransactionRow struct {
 	FileID        string
 	StartRow      int64
 	RowCount      int
 	ByteOffset    int
 	ByteLen       int
 	CreatedAt     time.Time
-	UpdatedAt     time.Time
 	State         transactionRowState
 	FailureReason *string
 }
 
-// newTransaction creates a new transaction for the given fileID starting at row 0
-func newTransaction(fileID string) transaction {
-	return transaction{
-		loc: Location{
-			FileID: fileID,
-		},
+// LoadTransaction creates a new transaction for the given fileID starting at row 0
+func LoadTransaction(ctx context.Context, conn *sqlx.Conn, fileID string) (*Transaction, *TransactionRow, error) {
+	row, err := getTransactionRow(ctx, conn, fileID, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to load transaction, %w", err)
 	}
+	return newTransactionAt(Location{
+		FileID:     row.FileID,
+		StartRow:   row.StartRow,
+		RowCount:   row.RowCount,
+		ByteOffset: row.ByteOffset,
+		ByteLen:    row.ByteLen,
+	}), row, nil
 }
 
 // newTransaction creates a new transaction for the given fileID starting at given location.
-func newTransactionAt(loc Location) transaction {
-	return transaction{
+func newTransactionAt(loc Location) *Transaction {
+	return &Transaction{
 		loc: loc,
 	}
 }
 
-func (tr transaction) setPending(ctx context.Context, conn *sqlx.Conn) error {
+func (tr Transaction) setProcessing(ctx context.Context, tx *sqlx.Tx) error {
 	sql := `
 	INSERT INTO timescaledb_parallel_copy (
 		file_id, start_row, row_count, byte_offset, byte_len,
-		created_at, updated_at, state, failure_reason
+		created_at,  state, failure_reason
 	)
-	VALUES ($1, $2, $3, $4, $5, NOW(), NOW(), 'pending', NULL)
+	VALUES ($1, $2, $3, $4, $5, NOW(), 'processing', NULL)
 	`
-	_, err := conn.ExecContext(ctx, sql, tr.loc.FileID, tr.loc.StartRow, tr.loc.RowCount, tr.loc.ByteOffset, tr.loc.ByteLen)
+	_, err := tx.ExecContext(ctx, sql, tr.loc.FileID, tr.loc.StartRow, tr.loc.RowCount, tr.loc.ByteOffset, tr.loc.ByteLen)
 	return err
 }
 
-func (tr transaction) setCompleted(ctx context.Context, tx *sqlx.Tx) error {
+func (tr Transaction) setCompleted(ctx context.Context, tx *sqlx.Tx) error {
 	sql := `
-	UPDATE timescaledb_parallel_copy
-	SET state = 'completed', failure_reason = NULL, updated_at = NOW()
-	WHERE file_id = $1 AND start_row = $2
+	INSERT INTO timescaledb_parallel_copy (
+		file_id, start_row, row_count, byte_offset, byte_len,
+		created_at, state, failure_reason
+	)
+	VALUES ($1, $2, $3, $4, $5, NOW(), 'completed', NULL)
 	`
-	_, err := tx.ExecContext(ctx, sql, tr.loc.FileID, tr.loc.StartRow)
+	_, err := tx.ExecContext(ctx, sql, tr.loc.FileID, tr.loc.StartRow, tr.loc.RowCount, tr.loc.ByteOffset, tr.loc.ByteLen)
 	return err
 }
 
-func (tr transaction) setFailed(ctx context.Context, conn *sqlx.Conn, reason string) error {
+func (tr Transaction) setFailed(ctx context.Context, conn *sqlx.Conn, reason string) error {
 	sql := `
-	UPDATE timescaledb_parallel_copy
-	SET state = 'failed', failure_reason = $1, updated_at = NOW()
-	WHERE file_id = $2 AND start_row = $3
+	INSERT INTO timescaledb_parallel_copy (
+		file_id, start_row, row_count, byte_offset, byte_len,
+		created_at, state, failure_reason
+	)
+	VALUES ($1, $2, $3, $4, $5, NOW(), 'failed', $6)
 	`
-	_, err := conn.ExecContext(ctx, sql, reason, tr.loc.FileID, tr.loc.StartRow)
+	_, err := conn.ExecContext(ctx, sql, tr.loc.FileID, tr.loc.StartRow, tr.loc.RowCount, tr.loc.ByteOffset, tr.loc.ByteLen, reason)
 	return err
 }
 
-// get returns the row stats for the current transaction
-func (tr transaction) get(ctx context.Context, conn *sqlx.Conn) (*transactionRow, error) {
-	row := &transactionRow{}
+// Get returns the row stats for the current transaction
+func (tr Transaction) Get(ctx context.Context, conn *sqlx.Conn) (*TransactionRow, error) {
+	return getTransactionRow(ctx, conn, tr.loc.FileID, tr.loc.StartRow)
+}
+
+func getTransactionRow(ctx context.Context, conn *sqlx.Conn, fileID string, startRow int64) (*TransactionRow, error) {
+	row := &TransactionRow{}
 
 	err := conn.QueryRowContext(ctx, `
-		SELECT file_id, start_row, row_count, byte_offset, byte_len, created_at, updated_at, state, failure_reason
+		SELECT file_id, start_row, row_count, byte_offset, byte_len, created_at, state, failure_reason
 		FROM timescaledb_parallel_copy
 		WHERE file_id = $1 AND start_row = $2
 		LIMIT 1
-	`, tr.loc.FileID, tr.loc.StartRow).Scan(
-		&row.FileID, &row.StartRow, &row.RowCount, &row.ByteOffset, &row.ByteLen, &row.CreatedAt, &row.UpdatedAt, &row.State, &row.FailureReason,
+	`, fileID, startRow).Scan(
+		&row.FileID, &row.StartRow, &row.RowCount, &row.ByteOffset, &row.ByteLen, &row.CreatedAt, &row.State, &row.FailureReason,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -103,26 +117,26 @@ func (tr transaction) get(ctx context.Context, conn *sqlx.Conn) (*transactionRow
 	return row, nil
 }
 
-// next returns the next transaction in the sequence.
-// If it returns nil, it means there is no next transaction
-func (tr transaction) next(ctx context.Context, conn *sqlx.Conn) (*transaction, error) {
-	row := transactionRow{}
+// Next returns the Next transaction in the sequence.
+// If it returns nil, it means there is no Next transaction
+func (tr Transaction) Next(ctx context.Context, conn *sqlx.Conn) (*Transaction, *TransactionRow, error) {
+	row := TransactionRow{}
 
 	err := conn.QueryRowContext(ctx, `
-		SELECT file_id, start_row, row_count, byte_offset, byte_len, created_at, updated_at, state, failure_reason
+		SELECT file_id, start_row, row_count, byte_offset, byte_len, created_at, state, failure_reason
 		FROM timescaledb_parallel_copy
 		WHERE file_id = $1 AND start_row > $2
 		ORDER BY start_row ASC
 		LIMIT 1
 	`, tr.loc.FileID, tr.loc.StartRow).Scan(
-		&row.FileID, &row.StartRow, &row.RowCount, &row.ByteOffset, &row.ByteLen, &row.CreatedAt, &row.UpdatedAt, &row.State, &row.FailureReason,
+		&row.FileID, &row.StartRow, &row.RowCount, &row.ByteOffset, &row.ByteLen, &row.CreatedAt, &row.State, &row.FailureReason,
 	)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	next := newTransactionAt(Location{
 		FileID:     row.FileID,
@@ -132,7 +146,7 @@ func (tr transaction) next(ctx context.Context, conn *sqlx.Conn) (*transaction, 
 		ByteLen:    row.ByteLen,
 	})
 
-	return &next, nil
+	return next, &row, nil
 }
 
 func ensureTransactionTable(ctx context.Context, conn *sqlx.Conn) error {
@@ -144,9 +158,9 @@ func ensureTransactionTable(ctx context.Context, conn *sqlx.Conn) error {
 		byte_offset BIGINT NOT NULL,
 		byte_len BIGINT NOT NULL,
 		created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-		updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
 		state TEXT NOT NULL DEFAULT 'pending',
-		failure_reason TEXT DEFAULT NULL
+		failure_reason TEXT DEFAULT NULL,
+		UNIQUE (file_id, start_row)
 	);`
 	_, err := conn.ExecContext(ctx, sql)
 	return err

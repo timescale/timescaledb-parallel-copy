@@ -3,9 +3,11 @@ package csvcopy
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
 )
@@ -66,10 +68,6 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 
 	err = tr.setCompleted(ctx, tx)
 	if err != nil {
-		handleErr := handleCopyError(ctx, db, tr, err)
-		if handleErr != nil {
-			return 0, fmt.Errorf("failed to handle error %s, failed to copy from lines %w,", handleErr, err)
-		}
 		return 0, fmt.Errorf("failed to insert control row, %w", err)
 	}
 
@@ -94,7 +92,11 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 	return rowCount, nil
 }
 
-func handleCopyError(ctx context.Context, db *sqlx.DB, tr transaction, copyErr error) error {
+func handleCopyError(ctx context.Context, db *sqlx.DB, tr *Transaction, copyErr error) error {
+	if isTemporaryError(copyErr) {
+		return nil
+	}
+
 	connx, err := db.Connx(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create a new connection, %w", err)
@@ -106,4 +108,17 @@ func handleCopyError(ctx context.Context, db *sqlx.DB, tr transaction, copyErr e
 		return fmt.Errorf("failed to set state to failed, %w", err)
 	}
 	return nil
+}
+
+func isTemporaryError(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		// Temporary errors: connection failures, resource issues
+		if pgErr.Code[:2] == "08" {
+			return true
+		}
+		// Consider other cases as needed for temporary errors
+	}
+	// Check for Go-specific transient errors
+	return errors.Is(err, context.DeadlineExceeded)
 }

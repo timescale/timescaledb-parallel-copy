@@ -111,7 +111,7 @@ func TestWriteDataToCSV(t *testing.T) {
 
 	rows.Close()
 
-	controlRow, err := newTransaction("test-file-id").get(ctx, connx)
+	_, controlRow, err := LoadTransaction(ctx, connx, "test-file-id")
 	require.NoError(t, err)
 	assert.Equal(t, controlRow.State, transactionRowStateCompleted)
 	assert.Equal(t, controlRow.FileID, "test-file-id")
@@ -119,7 +119,6 @@ func TestWriteDataToCSV(t *testing.T) {
 	assert.Equal(t, controlRow.RowCount, 2)
 	assert.Equal(t, controlRow.ByteOffset, 0)
 	assert.Equal(t, controlRow.ByteLen, 26)
-	assert.Greater(t, controlRow.UpdatedAt.UnixNano(), controlRow.CreatedAt.UnixNano())
 }
 
 func TestErrorAtRow(t *testing.T) {
@@ -604,39 +603,32 @@ func TestTransactionState(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 4, result.RowsRead)
 
-	batch1 := newTransaction("test-file-id")
-	{
-		row, err := batch1.get(ctx, connx)
-		require.NoError(t, err)
-		assert.Equal(t, "test-file-id", row.FileID)
-		assert.Equal(t, int64(0), row.StartRow)
-		assert.Equal(t, 2, row.RowCount)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
-	}
-	batch2, err := batch1.next(ctx, connx)
+	batch1, row, err := LoadTransaction(ctx, connx, "test-file-id")
 	require.NoError(t, err)
-	{
-		row, err := batch2.get(ctx, connx)
-		require.NoError(t, err)
-		assert.Equal(t, "test-file-id", row.FileID)
-		assert.Equal(t, int64(2), row.StartRow)
-		assert.Equal(t, 2, row.RowCount)
-		assert.Equal(t, transactionRowStateFailed, row.State)
-		assert.NotEmpty(t, row.FailureReason)
-	}
-	batch3, err := batch2.next(ctx, connx)
+	assert.Equal(t, "test-file-id", row.FileID)
+	assert.Equal(t, int64(0), row.StartRow)
+	assert.Equal(t, 2, row.RowCount)
+	assert.Equal(t, transactionRowStateCompleted, row.State)
+
+	batch2, row, err := batch1.Next(ctx, connx)
 	require.NoError(t, err)
-	{
-		row, err := batch3.get(ctx, connx)
-		require.NoError(t, err)
-		assert.Equal(t, "test-file-id", row.FileID)
-		assert.Equal(t, int64(4), row.StartRow)
-		assert.Equal(t, 2, row.RowCount)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
-	}
-	batch4, err := batch3.next(ctx, connx)
+	assert.Equal(t, "test-file-id", row.FileID)
+	assert.Equal(t, int64(2), row.StartRow)
+	assert.Equal(t, 2, row.RowCount)
+	assert.Equal(t, transactionRowStateFailed, row.State)
+	assert.NotEmpty(t, row.FailureReason)
+
+	batch3, row, err := batch2.Next(ctx, connx)
+	require.NoError(t, err)
+	assert.Equal(t, "test-file-id", row.FileID)
+	assert.Equal(t, int64(4), row.StartRow)
+	assert.Equal(t, 2, row.RowCount)
+	assert.Equal(t, transactionRowStateCompleted, row.State)
+
+	batch4, row, err := batch3.Next(ctx, connx)
 	require.NoError(t, err)
 	require.Nil(t, batch4)
+	require.Nil(t, row)
 
 }
 
@@ -716,47 +708,20 @@ func TestTransactionIdempotency(t *testing.T) {
 	// ensure only 4 rows are inserted
 	assert.EqualValues(t, 4, result.RowsRead)
 
-	batch1 := newTransaction("test-file-id")
-	{
-		row, err := batch1.get(ctx, connx)
-		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
-	}
-	batch2, err := batch1.next(ctx, connx)
+	batch1, row, err := LoadTransaction(ctx, connx, "test-file-id")
 	require.NoError(t, err)
-	{
-		row, err := batch2.get(ctx, connx)
-		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateFailed, row.State)
-	}
-	batch3, err := batch2.next(ctx, connx)
-	require.NoError(t, err)
-	{
-		row, err := batch3.get(ctx, connx)
-		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
-	}
+	assert.Equal(t, transactionRowStateCompleted, row.State)
 
-	err = tmpfile.Truncate(0)
+	batch2, row, err := batch1.Next(ctx, connx)
 	require.NoError(t, err)
-	dataFixed := [][]string{
-		// Batch 1
-		{"42", "xasev", "4.2"},
-		{"24", "qased", "2.4"},
-		// Batch 2
-		{"24", "qased", "2.4"},
-		{"24", "qased", "4.2"}, // Fixed data
-		// Batch 3
-		{"24", "qased", "2.4"},
-		{"24", "qased", "2.4"},
-	}
+	assert.Equal(t, transactionRowStateFailed, row.State)
 
-	for _, record := range dataFixed {
-		if err := writer.Write(record); err != nil {
-			t.Fatalf("Error writing record to CSV: %v", err)
-		}
-	}
-	writer.Flush()
+	_, row, err = batch2.Next(ctx, connx)
+	require.NoError(t, err)
+	assert.Equal(t, transactionRowStateCompleted, row.State)
+
+	_, err = tmpfile.Seek(0, 0)
+	require.NoError(t, err)
 
 	reader, err = os.Open(tmpfile.Name())
 	require.NoError(t, err)
@@ -771,33 +736,32 @@ func TestTransactionIdempotency(t *testing.T) {
 
 	result, err = copier.Copy(context.Background(), reader)
 	require.NoError(t, err)
-	// ensure only 2 rows are inserted
-	assert.EqualValues(t, 2, result.RowsRead)
+	// ensure no rows are inserted
+	assert.EqualValues(t, 0, result.RowsRead)
 
-	batch1 = newTransaction("test-file-id")
-	{
-		row, err := batch1.get(ctx, connx)
-		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
-	}
-	batch2, err = batch1.next(ctx, connx)
+	batch1, row, err = LoadTransaction(ctx, connx, "test-file-id")
 	require.NoError(t, err)
-	{
-		row, err := batch2.get(ctx, connx)
-		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
-	}
-	batch3, err = batch2.next(ctx, connx)
+	assert.Equal(t, transactionRowStateCompleted, row.State)
+
+	batch2, row, err = batch1.Next(ctx, connx)
+
 	require.NoError(t, err)
-	{
-		row, err := batch3.get(ctx, connx)
-		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
-	}
+	assert.Equal(t, transactionRowStateFailed, row.State)
+
+	_, row, err = batch2.Next(ctx, connx)
+	require.NoError(t, err)
+	assert.Equal(t, transactionRowStateCompleted, row.State)
 
 	var total int
 	err = connx.QueryRowxContext(ctx, "SELECT COUNT(*) FROM public.metrics").Scan(&total)
 	require.NoError(t, err)
-	assert.Equal(t, 6, total)
+	assert.Equal(t, 4, total)
+
+	failedBatchContent := make([]byte, batch2.loc.ByteLen)
+	_, err = reader.ReadAt(failedBatchContent, int64(batch2.loc.ByteOffset))
+	require.NoError(t, err)
+	require.Equal(t, `24,qased,2.4
+24,qased,hello
+`, string(failedBatchContent))
 
 }

@@ -112,9 +112,13 @@ func (c *Copier) Truncate() (err error) {
 }
 
 func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
+
+	if err := c.ensureTransactionTable(ctx); err != nil {
+		return Result{}, fmt.Errorf("failed to ensure transaction table")
+	}
+
 	var workerWg sync.WaitGroup
 	batchChan := make(chan Batch, c.workers*2)
-	scanChan := make(chan Batch, c.workers*2)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -164,26 +168,15 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		opts.Escape = c.escapeCharacter[0]
 	}
 
-	workerWg.Add(1)
-	go func() {
-		defer workerWg.Done()
-		if err := c.checkTransaction(ctx, scanChan, batchChan); err != nil {
-			errCh <- fmt.Errorf("failed reading input: %w", err)
-			cancel()
-		}
-		close(batchChan)
-		c.logger.Infof("stop check transaction")
-	}()
-
 	start := time.Now()
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		if err := scan(ctx, reader, scanChan, opts); err != nil {
+		if err := scan(ctx, reader, batchChan, opts); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
 			cancel()
 		}
-		close(scanChan)
+		close(batchChan)
 		c.logger.Infof("stop scan")
 	}()
 	workerWg.Wait()
@@ -214,10 +207,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	return result, nil
 }
 
-// checkTransaction monitors all batches going to the workers
-// If the batch has never been seen before, it will record the state in the database
-// If the batch has been seen and it reached completed state, it will be skipped
-func (c *Copier) checkTransaction(ctx context.Context, in <-chan Batch, out chan Batch) error {
+func (c *Copier) ensureTransactionTable(ctx context.Context) error {
 	db, err := connect(c.connString)
 	if err != nil {
 		return fmt.Errorf("failed to connect to database, %w", err)
@@ -233,36 +223,7 @@ func (c *Copier) checkTransaction(ctx context.Context, in <-chan Batch, out chan
 	if err != nil {
 		return fmt.Errorf("failed to ensure transaction table exists, %w", err)
 	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case b, ok := <-in:
-			if !ok {
-				return nil
-			}
-			tr := newTransactionAt(b.Location)
-			row, err := tr.get(ctx, conn)
-			if err != nil {
-				return fmt.Errorf("failed to query for transaction row %w", err)
-			}
-
-			if row != nil && row.State == transactionRowStateCompleted {
-				c.logger.Infof("skip already completed batch, id: %s", b.Location)
-				continue
-			}
-
-			err = tr.setPending(ctx, conn)
-			if err != nil {
-				return fmt.Errorf("failed to insert transaction row %w", err)
-			}
-			select {
-			case <-ctx.Done():
-			case out <- b:
-			}
-		}
-	}
+	return nil
 }
 
 type ErrAtRow struct {
