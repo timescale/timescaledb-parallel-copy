@@ -34,7 +34,7 @@ type TransactionRow struct {
 }
 
 // LoadTransaction creates a new transaction for the given fileID starting at row 0
-func LoadTransaction(ctx context.Context, conn *sqlx.Conn, fileID string) (*Transaction, *TransactionRow, error) {
+func LoadTransaction(ctx context.Context, conn sqlx.QueryerContext, fileID string) (*Transaction, *TransactionRow, error) {
 	row, err := getTransactionRow(ctx, conn, fileID, 0)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to load transaction, %w", err)
@@ -55,7 +55,7 @@ func newTransactionAt(loc Location) *Transaction {
 	}
 }
 
-func (tr Transaction) setCompleted(ctx context.Context, tx *sqlx.Tx) error {
+func (tr Transaction) setCompleted(ctx context.Context, conn sqlx.ExecerContext) error {
 	sql := `
 	INSERT INTO timescaledb_parallel_copy (
 		file_id, start_row, row_count, byte_offset, byte_len,
@@ -63,11 +63,11 @@ func (tr Transaction) setCompleted(ctx context.Context, tx *sqlx.Tx) error {
 	)
 	VALUES ($1, $2, $3, $4, $5, NOW(), 'completed', NULL)
 	`
-	_, err := tx.ExecContext(ctx, sql, tr.loc.FileID, tr.loc.StartRow, tr.loc.RowCount, tr.loc.ByteOffset, tr.loc.ByteLen)
+	_, err := conn.ExecContext(ctx, sql, tr.loc.FileID, tr.loc.StartRow, tr.loc.RowCount, tr.loc.ByteOffset, tr.loc.ByteLen)
 	return err
 }
 
-func (tr Transaction) setFailed(ctx context.Context, conn *sqlx.Conn, reason string) error {
+func (tr Transaction) setFailed(ctx context.Context, conn sqlx.ExecerContext, reason string) error {
 	sql := `
 	INSERT INTO timescaledb_parallel_copy (
 		file_id, start_row, row_count, byte_offset, byte_len,
@@ -80,14 +80,14 @@ func (tr Transaction) setFailed(ctx context.Context, conn *sqlx.Conn, reason str
 }
 
 // Get returns the row stats for the current transaction
-func (tr Transaction) Get(ctx context.Context, conn *sqlx.Conn) (*TransactionRow, error) {
+func (tr Transaction) Get(ctx context.Context, conn sqlx.QueryerContext) (*TransactionRow, error) {
 	return getTransactionRow(ctx, conn, tr.loc.FileID, tr.loc.StartRow)
 }
 
-func getTransactionRow(ctx context.Context, conn *sqlx.Conn, fileID string, startRow int64) (*TransactionRow, error) {
+func getTransactionRow(ctx context.Context, conn sqlx.QueryerContext, fileID string, startRow int64) (*TransactionRow, error) {
 	row := &TransactionRow{}
 
-	err := conn.QueryRowContext(ctx, `
+	err := conn.QueryRowxContext(ctx, `
 		SELECT file_id, start_row, row_count, byte_offset, byte_len, created_at, state, failure_reason
 		FROM timescaledb_parallel_copy
 		WHERE file_id = $1 AND start_row = $2
@@ -107,10 +107,10 @@ func getTransactionRow(ctx context.Context, conn *sqlx.Conn, fileID string, star
 
 // Next returns the Next transaction in the sequence.
 // If it returns nil, it means there is no Next transaction
-func (tr Transaction) Next(ctx context.Context, conn *sqlx.Conn) (*Transaction, *TransactionRow, error) {
+func (tr Transaction) Next(ctx context.Context, conn sqlx.QueryerContext) (*Transaction, *TransactionRow, error) {
 	row := TransactionRow{}
 
-	err := conn.QueryRowContext(ctx, `
+	err := conn.QueryRowxContext(ctx, `
 		SELECT file_id, start_row, row_count, byte_offset, byte_len, created_at, state, failure_reason
 		FROM timescaledb_parallel_copy
 		WHERE file_id = $1 AND start_row > $2
@@ -137,7 +137,7 @@ func (tr Transaction) Next(ctx context.Context, conn *sqlx.Conn) (*Transaction, 
 	return next, &row, nil
 }
 
-func ensureTransactionTable(ctx context.Context, conn *sqlx.Conn) error {
+func ensureTransactionTable(ctx context.Context, conn sqlx.ExecerContext) error {
 	sql := `
 	CREATE TABLE IF NOT EXISTS timescaledb_parallel_copy (
 		file_id TEXT NOT NULL,
