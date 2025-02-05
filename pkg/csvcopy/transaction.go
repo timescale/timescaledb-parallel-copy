@@ -55,18 +55,6 @@ func newTransactionAt(loc Location) *Transaction {
 	}
 }
 
-func (tr Transaction) setProcessing(ctx context.Context, tx *sqlx.Tx) error {
-	sql := `
-	INSERT INTO timescaledb_parallel_copy (
-		file_id, start_row, row_count, byte_offset, byte_len,
-		created_at,  state, failure_reason
-	)
-	VALUES ($1, $2, $3, $4, $5, NOW(), 'processing', NULL)
-	`
-	_, err := tx.ExecContext(ctx, sql, tr.loc.FileID, tr.loc.StartRow, tr.loc.RowCount, tr.loc.ByteOffset, tr.loc.ByteLen)
-	return err
-}
-
 func (tr Transaction) setCompleted(ctx context.Context, tx *sqlx.Tx) error {
 	sql := `
 	INSERT INTO timescaledb_parallel_copy (
