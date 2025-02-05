@@ -334,11 +334,13 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 	if c.failHandler != nil {
 		batch.Rewind()
 		failHandlerError = c.failHandler(batch, errAt)
+		if failHandlerError == nil {
+			// If fail handler error does not return an error,
+			// make it so it recovers the previous error and continues execution
+			failHandlerError = NewErrContinue(errAt)
+		}
 	} else {
 		failHandlerError = errAt
-	}
-	if failHandlerError == nil {
-		return nil
 	}
 
 	c.logger.Infof("handling error %#v", failHandlerError)
