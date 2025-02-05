@@ -46,8 +46,11 @@ func TestWriteDataToCSV(t *testing.T) {
 	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
 	require.NoError(t, err)
 	defer db.Close()
+
 	connx, err := db.Connx(ctx)
 	require.NoError(t, err)
+	defer connx.Close()
+
 	_, err = connx.ExecContext(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
 

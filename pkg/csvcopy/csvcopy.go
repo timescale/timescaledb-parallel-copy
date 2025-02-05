@@ -122,7 +122,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	errCh := make(chan error, c.workers+2)
+	errCh := make(chan error, c.workers+1)
 
 	// Generate COPY workers
 	for i := 0; i < c.workers; i++ {

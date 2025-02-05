@@ -210,7 +210,7 @@ func WithBatchErrorHandler(handler BatchErrorHandler) Option {
 // Usage: For every unique file that has to be inserted in the database, generate an
 // unique identifier. As long as configuration remains the same,
 // It is safe to run the same command multiple times.
-// It is NOT safe to run concurrently for the same ID.
+// It is safe to run concurrently for the same ID.
 //
 // Note: Using the same import id has the following expectation
 // - The input file will be the same

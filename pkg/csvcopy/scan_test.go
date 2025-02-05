@@ -411,7 +411,7 @@ func BenchmarkScan(b *testing.B) {
 
 			b.Run(name, func(b *testing.B) {
 				// Make sure our output channel won't block. This relies on each
-				// call to Scan() producing exactly one
+				// call to Scan() producing exactly one batch
 				rowChan := make(chan Batch, b.N)
 				b.ResetTimer()
 
