@@ -75,7 +75,7 @@ func TestWriteDataToCSV(t *testing.T) {
 
 	writer.Flush()
 
-	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithImportID("test-file-id"))
+	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"))
 	require.NoError(t, err)
 
 	reader, err := os.Open(tmpfile.Name())
@@ -114,14 +114,11 @@ func TestWriteDataToCSV(t *testing.T) {
 
 	rows.Close()
 
-	_, controlRow, err := LoadTransaction(ctx, connx, "test-file-id")
+	// Check if the table does not exist because the importID was not provided
+	var tableExists bool
+	err = connx.QueryRowContext(ctx, "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'timescaledb_parallel_copy_transactions')").Scan(&tableExists)
 	require.NoError(t, err)
-	assert.Equal(t, controlRow.State, transactionRowStateCompleted)
-	assert.Equal(t, controlRow.ImportID, "test-file-id")
-	assert.Equal(t, controlRow.StartRow, int64(0))
-	assert.Equal(t, controlRow.RowCount, 2)
-	assert.Equal(t, controlRow.ByteOffset, 0)
-	assert.Equal(t, controlRow.ByteLen, 26)
+	require.False(t, tableExists, "Table timescaledb_parallel_copy_transactions exists")
 }
 
 func TestErrorAtRow(t *testing.T) {
