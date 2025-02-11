@@ -12,7 +12,6 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/timescale/timescaledb-parallel-copy/pkg/csvcopy"
 )
 
@@ -103,12 +102,6 @@ func main() {
 		log.Fatalf("Error: Deprecated flag -db-name is being used. Update -connection to connect to the given database")
 	}
 	logger := &csvCopierLogger{}
-
-	if importID == "" {
-		importID = uuid.NewString()
-	}
-
-	logger.Infof("Running with importID \"%s\"", importID)
 
 	opts := []csvcopy.Option{
 		csvcopy.WithLogger(logger),
