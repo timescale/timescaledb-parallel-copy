@@ -141,9 +141,13 @@ func ensureTransactionTable(ctx context.Context, connString string) error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to database, %w", err)
 	}
-
 	defer dbx.Close()
+
 	connx, err := dbx.Connx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to connect to database, %w", err)
+	}
+	defer connx.Close()
 
 	sql := `
 	CREATE TABLE IF NOT EXISTS timescaledb_parallel_copy_transactions (
