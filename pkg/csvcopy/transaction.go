@@ -3,14 +3,10 @@ package csvcopy
 import (
 	"context"
 	"database/sql"
-	"embed"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/pgx/v5"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -140,43 +136,28 @@ func (tr Transaction) Next(ctx context.Context, conn sqlx.QueryerContext) (*Tran
 	return next, &row, nil
 }
 
-//go:embed migrations/*
-var migrations embed.FS
-
-const defaultMultiStatementMaxSize = 10 * 1 << 20 // 10 MB
-
-func ensureTransactionTable(connString string) error {
+func ensureTransactionTable(ctx context.Context, connString string) error {
 	dbx, err := connect(connString)
 	if err != nil {
 		return fmt.Errorf("failed to connect to database, %w", err)
 	}
 
 	defer dbx.Close()
-	source, err := iofs.New(migrations, "migrations")
-	if err != nil {
-		return fmt.Errorf("failed to load migration source, %w", err)
-	}
+	connx, err := dbx.Connx(ctx)
 
-	instance, err := pgx.WithInstance(dbx.DB, &pgx.Config{
-		MigrationsTable:       "timescaledb_parallel_copy_migrations",
-		StatementTimeout:      10 * time.Second,
-		MultiStatementMaxSize: defaultMultiStatementMaxSize,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create target db instance, %w", err)
-	}
+	sql := `
+	CREATE TABLE IF NOT EXISTS timescaledb_parallel_copy (
+		file_id TEXT NOT NULL,
+		start_row BIGINT NOT NULL,
+		row_count BIGINT NOT NULL,
+		byte_offset BIGINT NOT NULL,
+		byte_len BIGINT NOT NULL,
+		created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+		state TEXT NOT NULL DEFAULT 'pending',
+		failure_reason TEXT DEFAULT NULL,
+		UNIQUE (file_id, start_row)
+	);`
+	_, err = connx.ExecContext(ctx, sql)
+	return err
 
-	m, err := migrate.NewWithInstance("embed", source, "target_db", instance)
-	if err != nil {
-		return fmt.Errorf("failed to create migrate instance, %w", err)
-	}
-
-	err = m.Up()
-	if err != nil {
-		if errors.Is(err, migrate.ErrNoChange) {
-			return nil
-		}
-		return err
-	}
-	return nil
 }

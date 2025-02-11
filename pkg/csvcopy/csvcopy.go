@@ -115,7 +115,7 @@ func (c *Copier) Truncate() (err error) {
 
 func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 
-	if err := ensureTransactionTable(c.connString); err != nil {
+	if err := ensureTransactionTable(ctx, c.connString); err != nil {
 		return Result{}, fmt.Errorf("failed to ensure transaction table, %w", err)
 	}
 
