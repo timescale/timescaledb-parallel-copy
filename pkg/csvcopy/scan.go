@@ -92,7 +92,7 @@ type Location struct {
 	// ByteOffset is the byte position in the original file.
 	// It can be used with ReadAt to process the same batch again.
 	ByteOffset int
-	// ByteLen represents the number of bytes for the
+	// ByteLen represents the number of bytes for the batch.
 	// It can be used to know how big the batch is and read it accordingly
 	ByteLen int
 }
