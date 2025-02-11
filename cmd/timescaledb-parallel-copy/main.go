@@ -124,7 +124,10 @@ func main() {
 		csvcopy.WithLogBatches(logBatches),
 		csvcopy.WithReportingPeriod(reportingPeriod),
 		csvcopy.WithVerbose(verbose),
-		csvcopy.WithImportID(importID),
+	}
+
+	if importID != "" {
+		opts = append(opts, csvcopy.WithImportID(importID))
 	}
 
 	batchErrorHandler := csvcopy.BatchHandlerError()

@@ -58,6 +58,14 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 	}
 	defer connx.Close()
 
+	if !batch.Location.HasImportID() {
+		rowCount, err := copyFromLines(ctx, connx.Conn, &batch.Data, copyCmd)
+		if err != nil {
+			return rowCount, fmt.Errorf("failed to copy from lines %w", err)
+		}
+		return rowCount, nil
+	}
+
 	tx, err := connx.BeginTxx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return 0, fmt.Errorf("failed to start transaction: %w", err)

@@ -18,10 +18,10 @@ type scanOptions struct {
 	Quote  byte // the QUOTE character; defaults to '"'
 	Escape byte // the ESCAPE character; defaults to QUOTE
 
-	// FileID used for idempotency.
-	// If the same FileID is inserted, it will attempt to recover from a previously failed insert.
+	// ImportID used for idempotency.
+	// If the same ImportID is inserted, it will attempt to recover from a previously failed insert.
 	// If data is already inserted, it is a NOOP
-	FileID string
+	ImportID string
 }
 
 // Batch represents an operation to copy data into the DB
@@ -79,10 +79,10 @@ func (b *Batch) Rewind() {
 
 // Location positions a batch within the original data
 type Location struct {
-	// FileID used for idempotency.
-	// If the same FileID is inserted, it will attempt to recover from a previously failed insert.
+	// ImportID used for idempotency.
+	// If the same ImportID is inserted, it will attempt to recover from a previously failed insert.
 	// If data is already inserted, it is a NOOP
-	FileID string
+	ImportID string
 	// StartRow represents the index of the row where the batch starts.
 	// First row of the file is row 0
 	// The header counts as a line
@@ -97,9 +97,9 @@ type Location struct {
 	ByteLen int
 }
 
-func newLocation(fileID string, rowsRead int64, bufferedRows int, skip int, byteOffset int, byteLen int) Location {
+func newLocation(importID string, rowsRead int64, bufferedRows int, skip int, byteOffset int, byteLen int) Location {
 	return Location{
-		FileID:     fileID,
+		ImportID:   importID,
 		StartRow:   rowsRead - int64(bufferedRows) + int64(skip), // Index rows starting at 0
 		RowCount:   bufferedRows,
 		ByteOffset: byteOffset,
@@ -108,7 +108,11 @@ func newLocation(fileID string, rowsRead int64, bufferedRows int, skip int, byte
 }
 
 func (l Location) String() string {
-	return fmt.Sprintf("%s:%d", l.FileID, l.StartRow)
+	return fmt.Sprintf("%s:%d", l.ImportID, l.StartRow)
+}
+
+func (l Location) HasImportID() bool {
+	return l.ImportID != ""
 }
 
 // scan reads all lines from an io.Reader, partitions them into net.Buffers with
@@ -209,7 +213,7 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 				select {
 				case out <- newBatch(
 					bufs,
-					newLocation(opts.FileID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
+					newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 				):
 				case <-ctx.Done():
 					return ctx.Err()
@@ -234,7 +238,7 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 		select {
 		case out <- newBatch(
 			bufs,
-			newLocation(opts.FileID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
+			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 		):
 		case <-ctx.Done():
 			return ctx.Err()

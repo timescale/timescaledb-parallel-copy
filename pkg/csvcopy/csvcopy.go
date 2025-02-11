@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
@@ -76,7 +75,7 @@ func NewCopier(
 		reportingPeriod: 0,
 		verbose:         false,
 		skip:            0,
-		importID:        uuid.NewString(),
+		importID:        "",
 	}
 
 	for _, o := range options {
@@ -115,8 +114,10 @@ func (c *Copier) Truncate() (err error) {
 
 func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 
-	if err := ensureTransactionTable(ctx, c.connString); err != nil {
-		return Result{}, fmt.Errorf("failed to ensure transaction table, %w", err)
+	if c.HasImportID() {
+		if err := ensureTransactionTable(ctx, c.connString); err != nil {
+			return Result{}, fmt.Errorf("failed to ensure transaction table, %w", err)
+		}
 	}
 
 	var workerWg sync.WaitGroup
@@ -155,10 +156,10 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	}
 
 	opts := scanOptions{
-		Size:   c.batchSize,
-		Skip:   c.skip,
-		Limit:  c.limit,
-		FileID: c.importID,
+		Size:     c.batchSize,
+		Skip:     c.skip,
+		Limit:    c.limit,
+		ImportID: c.importID,
 	}
 
 	if c.quoteCharacter != "" {
@@ -349,17 +350,19 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 		return nil
 	}
 
-	connx, err := db.Connx(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to connect to database")
-	}
-	defer connx.Close()
+	if batch.Location.HasImportID() {
+		connx, err := db.Connx(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to connect to database")
+		}
+		defer connx.Close()
 
-	tr := newTransactionAt(batch.Location)
-	err = tr.setFailed(ctx, connx, failHandlerError.Error())
-	if err != nil {
-		if !isDuplicateKeyError(err) {
-			return fmt.Errorf("failed to set state to failed, %w", err)
+		tr := newTransactionAt(batch.Location)
+		err = tr.setFailed(ctx, connx, failHandlerError.Error())
+		if err != nil {
+			if !isDuplicateKeyError(err) {
+				return fmt.Errorf("failed to set state to failed, %w", err)
+			}
 		}
 	}
 
@@ -426,4 +429,8 @@ func (c *Copier) getFullTableName() string {
 
 func (c *Copier) GetRowCount() int64 {
 	return atomic.LoadInt64(&c.rowCount)
+}
+
+func (c *Copier) HasImportID() bool {
+	return c.importID != ""
 }
