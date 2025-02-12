@@ -111,7 +111,9 @@ func WithSkipHeader(skipHeader bool) Option {
 		if c.skip != 0 {
 			return errors.New("skip is already set. Use SkipHeader or SkipHeaderCount")
 		}
-		c.skip = 1
+		if skipHeader {
+			c.skip = 1
+		}
 		return nil
 	}
 }
