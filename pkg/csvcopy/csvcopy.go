@@ -370,12 +370,7 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 		}
 	}
 
-	batchError := &BatchError{}
-	if !errors.As(failHandlerError, &batchError) {
-		return failHandlerError
-	}
-
-	if !batchError.Continue {
+	if !failHandlerError.Continue {
 		return failHandlerError
 	}
 
