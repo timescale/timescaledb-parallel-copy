@@ -157,11 +157,17 @@ func ensureTransactionTable(ctx context.Context, connString string) error {
 		byte_offset BIGINT NOT NULL,
 		byte_len BIGINT NOT NULL,
 		created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-		state TEXT NOT NULL DEFAULT 'pending',
+		state TEXT NOT NULL,
 		failure_reason TEXT DEFAULT NULL,
-		UNIQUE (import_id, start_row)
-	);`
+		PRIMARY KEY (import_id, start_row)
+	);
+
+	-- Index for efficient lookups and ordering by import_id and start_row
+	-- Used when finding the next batch to process for a specific import
+	CREATE INDEX IF NOT EXISTS idx_transactions_import_start
+	ON timescaledb_parallel_copy_transactions (import_id, start_row);
+	`
+
 	_, err = connx.ExecContext(ctx, sql)
 	return err
-
 }

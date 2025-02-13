@@ -88,7 +88,7 @@ func TestWriteDataToCSV(t *testing.T) {
 	err = connx.QueryRowContext(ctx, "select count(*) from public.metrics").Scan(&rowCount)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(2), rowCount)
-	assert.Equal(t, int64(2), copier.GetRowCount())
+	assert.Equal(t, int64(2), copier.GetInsertedRows())
 
 	rows, err := connx.QueryContext(ctx, "select * from public.metrics")
 	require.NoError(t, err)
@@ -329,8 +329,8 @@ func TestWriteReportProgress(t *testing.T) {
 	atLeastOneReport := false
 	reportF := func(r Report) {
 		atLeastOneReport = true
-		require.GreaterOrEqual(t, r.RowCount, int64(0))
-		require.LessOrEqual(t, r.RowCount, int64(2))
+		require.GreaterOrEqual(t, r.InsertedRows, int64(0))
+		require.LessOrEqual(t, r.InsertedRows, int64(2))
 	}
 
 	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithReportingPeriod(100*time.Millisecond), WithReportingFunction(reportF))
@@ -348,7 +348,7 @@ func TestWriteReportProgress(t *testing.T) {
 	err = conn.QueryRow(ctx, "select count(*) from public.metrics").Scan(&rowCount)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(2), rowCount)
-	assert.Equal(t, int64(2), copier.GetRowCount())
+	assert.Equal(t, int64(2), copier.GetInsertedRows())
 
 	rows, err := conn.Query(ctx, "select * from public.metrics")
 	require.NoError(t, err)
@@ -429,7 +429,7 @@ func TestFailedBatchHandler(t *testing.T) {
 	require.NoError(t, err)
 	result, err := copier.Copy(context.Background(), reader)
 	require.NoError(t, err)
-	require.EqualValues(t, 4, result.RowsRead)
+	require.EqualValues(t, 4, result.InsertedRows)
 
 	require.Contains(t, fs.Files, 2)
 	require.Equal(t, fs.Files[2].String(), "24,qased,2.4\n24,qased,hello\n")
@@ -601,7 +601,7 @@ func TestTransactionState(t *testing.T) {
 	require.NoError(t, err)
 	result, err := copier.Copy(context.Background(), reader)
 	require.NoError(t, err)
-	require.EqualValues(t, 4, result.RowsRead)
+	require.EqualValues(t, 4, result.InsertedRows)
 
 	batch1, row, err := LoadTransaction(ctx, connx, "test-file-id")
 	require.NoError(t, err)
@@ -706,7 +706,8 @@ func TestTransactionIdempotency(t *testing.T) {
 	result, err := copier.Copy(context.Background(), reader)
 	require.NoError(t, err)
 	// ensure only 4 rows are inserted
-	assert.EqualValues(t, 4, result.RowsRead)
+	assert.EqualValues(t, 4, result.InsertedRows)
+	assert.EqualValues(t, 6, result.TotalRows)
 
 	batch1, row, err := LoadTransaction(ctx, connx, "test-file-id")
 	require.NoError(t, err)
@@ -737,7 +738,8 @@ func TestTransactionIdempotency(t *testing.T) {
 	result, err = copier.Copy(context.Background(), reader)
 	require.NoError(t, err)
 	// ensure no rows are inserted
-	assert.EqualValues(t, 0, result.RowsRead)
+	assert.EqualValues(t, 0, result.InsertedRows)
+	assert.EqualValues(t, 6, result.TotalRows)
 
 	batch1, row, err = LoadTransaction(ctx, connx, "test-file-id")
 	require.NoError(t, err)

@@ -20,9 +20,13 @@ import (
 const TAB_CHAR_STR = "\\t"
 
 type Result struct {
-	RowsRead int64
-	Duration time.Duration
-	RowRate  float64
+	// InsertedRows is the number of rows inserted into the database
+	InsertedRows int64
+	// TotalRows is the number of rows readed from source
+	// rows may be skipped if already processed so it may differ from rows inserted
+	TotalRows int64
+	Duration  time.Duration
+	RowRate   float64
 }
 
 type Copier struct {
@@ -45,7 +49,8 @@ type Copier struct {
 	reportingFunction ReportFunc
 	verbose           bool
 	skip              int
-	rowCount          int64
+	insertedRows      int64
+	totalRows         int64
 	importID          string
 
 	failHandler BatchErrorHandler
@@ -195,13 +200,15 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	end := time.Now()
 	took := end.Sub(start)
 
-	rowsRead := atomic.LoadInt64(&c.rowCount)
-	rowRate := float64(rowsRead) / float64(took.Seconds())
+	insertedRows := c.GetInsertedRows()
+	totalRows := c.GetTotalRows()
+	rowRate := float64(insertedRows) / float64(took.Seconds())
 
 	result := Result{
-		RowsRead: rowsRead,
-		Duration: took,
-		RowRate:  rowRate,
+		InsertedRows: insertedRows,
+		TotalRows:    totalRows,
+		Duration:     took,
+		RowRate:      rowRate,
 	}
 
 	if err != nil {
@@ -297,6 +304,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) 
 			if !ok {
 				return
 			}
+			atomic.AddInt64(&c.totalRows, int64(batch.Location.RowCount))
 
 			start := time.Now()
 			rows, err := copyFromBatch(ctx, dbx, batch, copyCmd)
@@ -306,7 +314,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) 
 					return err
 				}
 			}
-			atomic.AddInt64(&c.rowCount, rows)
+			atomic.AddInt64(&c.insertedRows, rows)
 
 			if c.logBatches {
 				took := time.Since(start)
@@ -406,17 +414,19 @@ func (c *Copier) report(ctx context.Context) {
 		select {
 		case now := <-ticker.C:
 			c.reportingFunction(Report{
-				Timestamp: now,
-				StartedAt: start,
-				RowCount:  c.GetRowCount(),
+				Timestamp:    now,
+				StartedAt:    start,
+				InsertedRows: c.GetInsertedRows(),
+				TotalRows:    c.GetTotalRows(),
 			})
 
 		case <-ctx.Done():
 			// Report one last time
 			c.reportingFunction(Report{
-				Timestamp: time.Now(),
-				StartedAt: start,
-				RowCount:  c.GetRowCount(),
+				Timestamp:    time.Now(),
+				StartedAt:    start,
+				InsertedRows: c.GetInsertedRows(),
+				TotalRows:    c.GetTotalRows(),
 			})
 			return
 		}
@@ -427,8 +437,12 @@ func (c *Copier) getFullTableName() string {
 	return fmt.Sprintf(`"%s"."%s"`, c.schemaName, c.tableName)
 }
 
-func (c *Copier) GetRowCount() int64 {
-	return atomic.LoadInt64(&c.rowCount)
+func (c *Copier) GetInsertedRows() int64 {
+	return atomic.LoadInt64(&c.insertedRows)
+}
+
+func (c *Copier) GetTotalRows() int64 {
+	return atomic.LoadInt64(&c.totalRows)
 }
 
 func (c *Copier) HasImportID() bool {

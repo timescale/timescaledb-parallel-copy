@@ -179,7 +179,7 @@ func main() {
 		log.Fatal("failed to copy CSV: ", err)
 	}
 
-	res := fmt.Sprintf("COPY %d", result.RowsRead)
+	res := fmt.Sprintf("COPY %d", result.InsertedRows)
 	if verbose {
 		res += fmt.Sprintf(
 			", took %v with %d worker(s) (mean rate %f/sec)",
