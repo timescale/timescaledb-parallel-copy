@@ -338,7 +338,7 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 		return nil
 	}
 
-	var failHandlerError error
+	var failHandlerError *BatchError
 	// If failHandler is defined, attempt to handle the error
 	if c.failHandler != nil {
 		batch.Rewind()
@@ -349,16 +349,12 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 			failHandlerError = NewErrContinue(errAt)
 		}
 	} else {
-		failHandlerError = errAt
+		failHandlerError = NewErrStop(errAt)
 	}
 
 	c.logger.Infof("handling error %#v", failHandlerError)
-	// Temporal errors should not set batch as failed
-	if isTemporaryError(failHandlerError) {
-		return nil
-	}
 
-	if batch.Location.HasImportID() {
+	if batch.Location.HasImportID() && !isTemporaryError(failHandlerError) {
 		connx, err := db.Connx(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to connect to database")

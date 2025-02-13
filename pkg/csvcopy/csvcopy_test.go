@@ -423,7 +423,7 @@ func TestFailedBatchHandler(t *testing.T) {
 	writer.Flush()
 	fs := &MockErrorHandler{}
 
-	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithBatchSize(2), WithBatchErrorHandler(fs.HandleError))
+	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithBatchSize(2), WithBatchErrorHandler(BatchHandlerSaveToFile("testdata", fs.HandleError)))
 	require.NoError(t, err)
 	reader, err := os.Open(tmpfile.Name())
 	require.NoError(t, err)
@@ -445,7 +445,7 @@ type MockErrorHandler struct {
 	Errors map[int]error
 }
 
-func (fs *MockErrorHandler) HandleError(batch Batch, reason error) error {
+func (fs *MockErrorHandler) HandleError(batch Batch, reason error) *BatchError {
 	if fs.Files == nil {
 		fs.Files = map[int]*bytes.Buffer{}
 	}
@@ -455,11 +455,11 @@ func (fs *MockErrorHandler) HandleError(batch Batch, reason error) error {
 	buf := &bytes.Buffer{}
 	_, err := buf.ReadFrom(&batch.Data)
 	if err != nil {
-		return err
+		return NewErrStop(fmt.Errorf("failed to read batch data: %w", err))
 	}
 	fs.Files[int(batch.Location.StartRow)] = buf
 	fs.Errors[int(batch.Location.StartRow)] = reason
-	return nil
+	return NewErrStop(reason)
 }
 
 func TestFailedBatchHandlerFailure(t *testing.T) {
@@ -517,8 +517,8 @@ func TestFailedBatchHandlerFailure(t *testing.T) {
 
 	writer.Flush()
 
-	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithBatchSize(2), WithBatchErrorHandler(func(batch Batch, err error) error {
-		return fmt.Errorf("couldn't handle error %w", err)
+	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithBatchSize(2), WithBatchErrorHandler(func(batch Batch, err error) *BatchError {
+		return NewErrStop(fmt.Errorf("couldn't handle error %w", err))
 	}))
 	require.NoError(t, err)
 	reader, err := os.Open(tmpfile.Name())

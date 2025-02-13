@@ -189,15 +189,15 @@ func WithSchemaName(schema string) Option {
 	}
 }
 
-func NewErrContinue(err error) BatchError {
-	return BatchError{
+func NewErrContinue(err error) *BatchError {
+	return &BatchError{
 		Continue: true,
 		Err:      err,
 	}
 }
 
-func NewErrStop(err error) BatchError {
-	return BatchError{
+func NewErrStop(err error) *BatchError {
+	return &BatchError{
 		Continue: false,
 		Err:      err,
 	}
@@ -222,7 +222,7 @@ func (err BatchError) Unwrap() error {
 // If the error is not handled properly, returning an error will stop the workers
 // If ErrContinue is returned, the batch will be marked as failed but continue processing
 // if ErrStop is returned, the processing will stop
-type BatchErrorHandler func(batch Batch, err error) error
+type BatchErrorHandler func(batch Batch, err error) *BatchError
 
 // WithBatchErrorHandler specifies which fail handler implementation to use
 func WithBatchErrorHandler(handler BatchErrorHandler) Option {
