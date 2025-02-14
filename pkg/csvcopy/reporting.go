@@ -13,9 +13,12 @@ type Report struct {
 	Timestamp time.Time
 	StartedAt time.Time
 
+	// Rows inserted into the database by this copier instance
 	InsertedRows int64
-	SkippedRows  int64
-	TotalRows    int64
+	// Rows skipped because they were already processed
+	SkippedRows int64
+	// Total rows read from source
+	TotalRows int64
 }
 
 func (r *Report) Rate() float64 {
