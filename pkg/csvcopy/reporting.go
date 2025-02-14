@@ -14,6 +14,7 @@ type Report struct {
 	StartedAt time.Time
 
 	InsertedRows int64
+	SkippedRows  int64
 	TotalRows    int64
 }
 
@@ -40,11 +41,12 @@ func DefaultReportFunc(logger Logger) ReportFunc {
 		totalTook := r.Timestamp.Sub(r.StartedAt)
 
 		logger.Infof(
-			"(%v), row rate %0.2f/sec (period), row rate %0.2f/sec (overall), %s total inserted rows, %s total rows",
+			"(%v), row rate %0.2f/sec (period), row rate %0.2f/sec (overall), %s total inserted rows, %s skipped rows, %s total rows",
 			totalTook-(totalTook%time.Second),
 			rowrate,
 			overallRowrate,
 			p.Sprintf("%d", r.InsertedRows),
+			p.Sprintf("%d", r.SkippedRows),
 			p.Sprintf("%d", r.TotalRows),
 		)
 		previous = r

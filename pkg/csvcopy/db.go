@@ -3,7 +3,6 @@ package csvcopy
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"io"
 
@@ -11,9 +10,13 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-var (
-	ErrBatchAlreadyProcessed = errors.New("batch already processed")
-)
+type ErrBatchAlreadyProcessed struct {
+	State *TransactionRow
+}
+
+func (e *ErrBatchAlreadyProcessed) Error() string {
+	return fmt.Sprintf("batch already processed: %s", e.State.State)
+}
 
 // connect returns a SQLX database corresponding to the provided connection
 // string/URL, env variables, and any provided overrides.
@@ -80,7 +83,13 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 	err = tr.setCompleted(ctx, tx)
 	if err != nil {
 		if isDuplicateKeyError(err) {
-			return 0, ErrBatchAlreadyProcessed
+			trState, err := tr.Get(ctx, tx)
+			if err != nil {
+				return 0, fmt.Errorf("failed to get transaction row: %w", err)
+			}
+			return 0, &ErrBatchAlreadyProcessed{
+				State: trState,
+			}
 		}
 		return 0, fmt.Errorf("failed to insert control row, %w", err)
 	}

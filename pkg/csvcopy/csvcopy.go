@@ -20,9 +20,11 @@ import (
 const TAB_CHAR_STR = "\\t"
 
 type Result struct {
-	// InsertedRows is the number of rows inserted into the database
+	// InsertedRows is the number of rows inserted into the database by this copier instance
 	InsertedRows int64
-	// TotalRows is the number of rows readed from source
+	// SkippedRows is the number of rows skipped because they were already processed
+	SkippedRows int64
+	// TotalRows is the number of rows read from source
 	// rows may be skipped if already processed so it may differ from rows inserted
 	TotalRows int64
 	Duration  time.Duration
@@ -49,9 +51,14 @@ type Copier struct {
 	reportingFunction ReportFunc
 	verbose           bool
 	skip              int
-	insertedRows      int64
-	totalRows         int64
 	importID          string
+
+	// Rows that are inserted in the database by this copier instance
+	insertedRows int64
+	// Rows that are skipped because they were already processed
+	skippedRows int64
+	// Total rows read from the source
+	totalRows int64
 
 	failHandler BatchErrorHandler
 }
@@ -202,11 +209,13 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 
 	insertedRows := c.GetInsertedRows()
 	totalRows := c.GetTotalRows()
+	skippedRows := c.GetSkippedRows()
 	rowRate := float64(insertedRows) / float64(took.Seconds())
 
 	result := Result{
 		InsertedRows: insertedRows,
 		TotalRows:    totalRows,
+		SkippedRows:  skippedRows,
 		Duration:     took,
 		RowRate:      rowRate,
 	}
@@ -316,6 +325,12 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) 
 			}
 			atomic.AddInt64(&c.insertedRows, rows)
 
+			if err, ok := err.(*ErrBatchAlreadyProcessed); ok {
+				if err.State.State == "completed" {
+					atomic.AddInt64(&c.skippedRows, int64(batch.Location.RowCount))
+				}
+			}
+
 			if c.logBatches {
 				took := time.Since(start)
 				fmt.Printf("[BATCH] starting at row %d, took %v, batch size %d, row rate %f/sec\n", batch.Location.StartRow, took, batch.Location.RowCount, float64(batch.Location.RowCount)/float64(took.Seconds()))
@@ -333,8 +348,8 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 		errAt.Row = ExtractRowFrom(pgerr)
 	}
 
-	if errors.Is(copyErr, ErrBatchAlreadyProcessed) {
-		c.logger.Infof("skip batch %s already processed", batch.Location)
+	if err, ok := copyErr.(*ErrBatchAlreadyProcessed); ok {
+		c.logger.Infof("skip batch %s already processed with state %s", batch.Location, err.State.State)
 		return nil
 	}
 
@@ -412,6 +427,7 @@ func (c *Copier) report(ctx context.Context) {
 				Timestamp:    now,
 				StartedAt:    start,
 				InsertedRows: c.GetInsertedRows(),
+				SkippedRows:  c.GetSkippedRows(),
 				TotalRows:    c.GetTotalRows(),
 			})
 
@@ -421,6 +437,7 @@ func (c *Copier) report(ctx context.Context) {
 				Timestamp:    time.Now(),
 				StartedAt:    start,
 				InsertedRows: c.GetInsertedRows(),
+				SkippedRows:  c.GetSkippedRows(),
 				TotalRows:    c.GetTotalRows(),
 			})
 			return
@@ -434,6 +451,10 @@ func (c *Copier) getFullTableName() string {
 
 func (c *Copier) GetInsertedRows() int64 {
 	return atomic.LoadInt64(&c.insertedRows)
+}
+
+func (c *Copier) GetSkippedRows() int64 {
+	return atomic.LoadInt64(&c.skippedRows)
 }
 
 func (c *Copier) GetTotalRows() int64 {
