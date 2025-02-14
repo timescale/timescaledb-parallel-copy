@@ -1,16 +1,13 @@
-package batch
+package csvcopy
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jmoiron/sqlx"
-	"github.com/timescale/timescaledb-parallel-copy/internal/db"
 )
 
 func TestCSVRowState(t *testing.T) {
@@ -228,7 +225,7 @@ func TestCSVRowState(t *testing.T) {
 			allLines := strings.Join(c.input, "")
 			copyCmd := fmt.Sprintf(`COPY csv FROM STDIN WITH %s`, copyOpts)
 
-			num, err := db.CopyFromLines(context.Background(), d, strings.NewReader(allLines), copyCmd)
+			num, err := copyFromBatch(context.Background(), d, newBatchFromReader(strings.NewReader(allLines)), copyCmd)
 
 			if c.expectMore {
 				// If our test case claimed to be unterminated, then the DB
@@ -255,22 +252,4 @@ func TestCSVRowState(t *testing.T) {
 			}
 		})
 	}
-}
-
-// mustConnect reads the TEST_CONNINFO environment variable and attempts to
-// connect to the database it points to. If the variable doesn't exist (or is
-// empty), the test is skipped. If it exists but can't be used to connect, the
-// test fails. The new database connection is returned.
-func mustConnect(t *testing.T) *sqlx.DB {
-	conninfo := os.Getenv("TEST_CONNINFO")
-	if len(conninfo) == 0 {
-		t.Skip("the TEST_CONNINFO environment variable must point to a running database")
-	}
-
-	d, err := db.Connect(conninfo)
-	if err != nil {
-		t.Fatalf("failed to connect using TEST_CONNINFO: %v", err)
-	}
-
-	return d
 }

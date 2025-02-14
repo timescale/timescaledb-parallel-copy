@@ -1,4 +1,4 @@
-package batch
+package csvcopy
 
 import (
 	"bufio"
@@ -9,14 +9,19 @@ import (
 	"net"
 )
 
-// Options contains all the configurable knobs for Scan.
-type Options struct {
+// scanOptions contains all the configurable knobs for Scan.
+type scanOptions struct {
 	Size  int   // maximum number of rows per batch
 	Skip  int   // how many header lines to skip at the beginning
 	Limit int64 // total number of rows to scan after the header
 
 	Quote  byte // the QUOTE character; defaults to '"'
 	Escape byte // the ESCAPE character; defaults to QUOTE
+
+	// ImportID used for idempotency.
+	// If the same ImportID is inserted, it will attempt to recover from a previously failed insert.
+	// If data is already inserted, it is a NOOP
+	ImportID string
 }
 
 // Batch represents an operation to copy data into the DB
@@ -30,12 +35,34 @@ type Batch struct {
 	backup net.Buffers
 }
 
-func NewBatch(data net.Buffers, location Location) Batch {
+func newBatch(data net.Buffers, location Location) Batch {
 	b := Batch{
 		Data:     data,
 		Location: location,
 	}
 	b.snapshot()
+	return b
+}
+
+// newBatchFromReader used for testing purposes
+func newBatchFromReader(r io.Reader) Batch {
+	b := Batch{}
+	buf := make([]byte, 32*1024)
+
+	for {
+		n, err := r.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			log.Fatalf("Error reading data: %v", err)
+		}
+
+		b.Location.ByteLen += n
+		// Process the data read from the buffer
+		b.Data = append(b.Data, buf[:n])
+	}
+
 	return b
 }
 
@@ -52,6 +79,10 @@ func (b *Batch) Rewind() {
 
 // Location positions a batch within the original data
 type Location struct {
+	// ImportID used for idempotency.
+	// If the same ImportID is inserted, it will attempt to recover from a previously failed insert.
+	// If data is already inserted, it is a NOOP
+	ImportID string
 	// StartRow represents the index of the row where the batch starts.
 	// First row of the file is row 0
 	// The header counts as a line
@@ -66,26 +97,35 @@ type Location struct {
 	ByteLen int
 }
 
-func NewLocation(rowsRead int64, bufferedRows int, skip int, byteOffset int, byteLen int) Location {
+func newLocation(importID string, rowsRead int64, bufferedRows int, skip int, byteOffset int, byteLen int) Location {
 	return Location{
-		StartRow:   rowsRead - int64(bufferedRows) + int64(skip) - 1, // Index rows starting at 0
+		ImportID:   importID,
+		StartRow:   rowsRead - int64(bufferedRows) + int64(skip), // Index rows starting at 0
 		RowCount:   bufferedRows,
 		ByteOffset: byteOffset,
 		ByteLen:    byteLen,
 	}
 }
 
-// Scan reads all lines from an io.Reader, partitions them into net.Buffers with
+func (l Location) String() string {
+	return fmt.Sprintf("%s:%d", l.ImportID, l.StartRow)
+}
+
+func (l Location) HasImportID() bool {
+	return l.ImportID != ""
+}
+
+// scan reads all lines from an io.Reader, partitions them into net.Buffers with
 // opts.Size rows each, and writes each batch to the out channel. If opts.Skip
 // is greater than zero, that number of lines will be discarded from the
-// beginning of the data. If opts.Limit is greater than zero, then Scan will
+// beginning of the data. If opts.Limit is greater than zero, then scan will
 // stop once it has written that number of rows, across all batches, to the
 // channel.
 //
-// Scan expects the input to be in Postgres CSV format. Since this format allows
+// scan expects the input to be in Postgres CSV format. Since this format allows
 // rows to be split over multiple lines, the caller may provide opts.Quote and
 // opts.Escape as the QUOTE and ESCAPE characters used for the CSV input.
-func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) error {
+func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) error {
 	var rowsRead int64
 	counter := &CountReader{Reader: r}
 	reader := bufio.NewReader(counter)
@@ -129,6 +169,8 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 	bufs := make(net.Buffers, 0, opts.Size)
 	var bufferedRows int
 
+	// finishedRow is true if the current row has been fully read and counted
+	finishedRow := true
 	byteStart := counter.Total - reader.Buffered()
 	for {
 		eol := false
@@ -144,7 +186,6 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 			// Also fine, but unlike ErrBufferFull we won't have another
 			// iteration after this. We still need to handle any data that was
 			// returned.
-
 		case nil:
 			// We read a full line from the input.
 			eol = true
@@ -154,6 +195,7 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 		}
 
 		if len(data) > 0 {
+			finishedRow = false
 			// ReadSlice doesn't make a copy of the data; to avoid an overwrite
 			// on the next call, we need to make one now.
 			buf := make([]byte, len(data))
@@ -164,6 +206,7 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 			// case the row hasn't ended yet even if we're at the end of a line.
 			scanner.Scan(buf)
 			if eol && !scanner.NeedsMore() {
+				finishedRow = true
 				bufferedRows++
 				rowsRead++
 			}
@@ -171,9 +214,9 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 			if bufferedRows >= opts.Size { // dispatch to COPY worker & reset
 				byteEnd := counter.Total - reader.Buffered()
 				select {
-				case out <- NewBatch(
+				case out <- newBatch(
 					bufs,
-					NewLocation(rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
+					newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 				):
 				case <-ctx.Done():
 					return ctx.Err()
@@ -186,25 +229,29 @@ func Scan(ctx context.Context, r io.Reader, out chan<- Batch, opts Options) erro
 
 		// Check termination conditions.
 		if err == io.EOF {
+			// if we have data in the buffer and we are not at the end of a row, we need to count the last row
+			// this can happen if the last row is not terminated by a newline
+			if len(bufs) > 0 && !finishedRow {
+				bufferedRows++
+				rowsRead++
+			}
 			break
 		} else if opts.Limit != 0 && rowsRead >= opts.Limit {
 			break
 		}
 	}
-
 	// Finished reading input, make sure last batch goes out.
 	if len(bufs) > 0 {
 		byteEnd := counter.Total - reader.Buffered()
 		select {
-		case out <- NewBatch(
+		case out <- newBatch(
 			bufs,
-			NewLocation(rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
+			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 		):
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
-	log.Print("total rows ", rowsRead)
 
 	return nil
 }

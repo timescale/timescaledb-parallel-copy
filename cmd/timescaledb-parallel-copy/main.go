@@ -17,7 +17,7 @@ import (
 
 const (
 	binName    = "timescaledb-parallel-copy"
-	version    = "v0.9.0"
+	version    = "v0.10.0"
 	tabCharStr = "\\t"
 )
 
@@ -40,6 +40,7 @@ var (
 	batchErrorOutputDir string
 	skipBatchErrors     bool
 
+	importID        string
 	workers         int
 	limit           int64
 	batchSize       int
@@ -72,6 +73,7 @@ func init() {
 	flag.StringVar(&batchErrorOutputDir, "batch-error-output-dir", "", "directory to store batch errors. Settings this will save a .csv file with the contents of the batch that failed and continue with the rest of the data.")
 	flag.BoolVar(&skipBatchErrors, "skip-batch-errors", false, "if true, the copy will continue even if a batch fails")
 
+	flag.StringVar(&importID, "import-id", "", "ImportID to guarantee idempotency")
 	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert")
 	flag.Int64Var(&limit, "limit", 0, "Number of rows to insert overall; 0 means to insert all")
 	flag.IntVar(&workers, "workers", 1, "Number of parallel requests to make")
@@ -115,6 +117,10 @@ func main() {
 		csvcopy.WithLogBatches(logBatches),
 		csvcopy.WithReportingPeriod(reportingPeriod),
 		csvcopy.WithVerbose(verbose),
+	}
+
+	if importID != "" {
+		opts = append(opts, csvcopy.WithImportID(importID))
 	}
 
 	batchErrorHandler := csvcopy.BatchHandlerError()
@@ -173,7 +179,7 @@ func main() {
 		log.Fatal("failed to copy CSV: ", err)
 	}
 
-	res := fmt.Sprintf("COPY %d", result.RowsRead)
+	res := fmt.Sprintf("COPY %d", result.InsertedRows)
 	if verbose {
 		res += fmt.Sprintf(
 			", took %v with %d worker(s) (mean rate %f/sec)",
