@@ -169,6 +169,8 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 	bufs := make(net.Buffers, 0, opts.Size)
 	var bufferedRows int
 
+	// finishedRow is true if the current row has been fully read and counted
+	finishedRow := true
 	byteStart := counter.Total - reader.Buffered()
 	for {
 		eol := false
@@ -184,7 +186,6 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 			// Also fine, but unlike ErrBufferFull we won't have another
 			// iteration after this. We still need to handle any data that was
 			// returned.
-
 		case nil:
 			// We read a full line from the input.
 			eol = true
@@ -194,6 +195,7 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 		}
 
 		if len(data) > 0 {
+			finishedRow = false
 			// ReadSlice doesn't make a copy of the data; to avoid an overwrite
 			// on the next call, we need to make one now.
 			buf := make([]byte, len(data))
@@ -204,6 +206,7 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 			// case the row hasn't ended yet even if we're at the end of a line.
 			scanner.Scan(buf)
 			if eol && !scanner.NeedsMore() {
+				finishedRow = true
 				bufferedRows++
 				rowsRead++
 			}
@@ -226,12 +229,17 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 
 		// Check termination conditions.
 		if err == io.EOF {
+			// if we have data in the buffer and we are not at the end of a row, we need to count the last row
+			// this can happen if the last row is not terminated by a newline
+			if len(bufs) > 0 && !finishedRow {
+				bufferedRows++
+				rowsRead++
+			}
 			break
 		} else if opts.Limit != 0 && rowsRead >= opts.Limit {
 			break
 		}
 	}
-
 	// Finished reading input, make sure last batch goes out.
 	if len(bufs) > 0 {
 		byteEnd := counter.Total - reader.Buffered()
@@ -244,7 +252,6 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 			return ctx.Err()
 		}
 	}
-	log.Print("total rows ", rowsRead)
 
 	return nil
 }

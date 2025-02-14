@@ -291,8 +291,13 @@ func TestErrorAtRow(t *testing.T) {
 	require.NoError(t, err)
 	reader, err := os.Open(tmpfile.Name())
 	require.NoError(t, err)
-	_, err = copier.Copy(context.Background(), reader)
+	r, err := copier.Copy(context.Background(), reader)
 	assert.Error(t, err)
+
+	require.NotNil(t, r)
+	assert.EqualValues(t, 2, int(r.InsertedRows))
+	assert.EqualValues(t, 4, int(r.TotalRows))
+
 	errAtRow := &ErrAtRow{}
 	assert.ErrorAs(t, err, &errAtRow)
 	assert.EqualValues(t, 3, errAtRow.RowAtLocation())
@@ -368,8 +373,13 @@ func TestErrorAtRowWithHeader(t *testing.T) {
 	require.NoError(t, err)
 	reader, err := os.Open(tmpfile.Name())
 	require.NoError(t, err)
-	_, err = copier.Copy(context.Background(), reader)
+	r, err := copier.Copy(context.Background(), reader)
 	assert.Error(t, err)
+
+	require.NotNil(t, r)
+	assert.EqualValues(t, 2, int(r.InsertedRows))
+	assert.EqualValues(t, 4, int(r.TotalRows))
+
 	errAtRow := &ErrAtRow{}
 	assert.ErrorAs(t, err, &errAtRow)
 	assert.EqualValues(t, 4, errAtRow.RowAtLocation())
@@ -451,6 +461,9 @@ func TestWriteReportProgress(t *testing.T) {
 	r, err := copier.Copy(context.Background(), reader)
 	require.NoError(t, err)
 	require.NotNil(t, r)
+
+	assert.EqualValues(t, 2, int(r.InsertedRows))
+	assert.EqualValues(t, 2, int(r.TotalRows))
 
 	require.True(t, atLeastOneReport)
 
@@ -717,8 +730,11 @@ func TestFailedBatchHandlerFailure(t *testing.T) {
 	require.NoError(t, err)
 	reader, err := os.Open(tmpfile.Name())
 	require.NoError(t, err)
-	_, err = copier.Copy(context.Background(), reader)
+	r, err := copier.Copy(context.Background(), reader)
 	require.Error(t, err)
+	require.NotNil(t, r)
+	require.EqualValues(t, 2, int(r.InsertedRows))
+	require.EqualValues(t, 4, int(r.TotalRows))
 	require.ErrorContains(t, err, "couldn't handle error")
 
 }

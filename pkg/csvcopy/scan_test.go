@@ -11,20 +11,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
 
 func TestScan(t *testing.T) {
 	cases := []struct {
-		name     string
-		input    []string
-		size     int
-		skip     int
-		limit    int64
-		quote    rune // default '"'
-		escape   rune // default is c.quote
-		expected []string
+		name             string
+		input            []string
+		size             int
+		skip             int
+		limit            int64
+		quote            rune // default '"'
+		escape           rune // default is c.quote
+		expected         []string
+		expectedRowCount []int
 	}{
 		{
 			name: "basic split",
@@ -39,6 +41,10 @@ func TestScan(t *testing.T) {
 				"a,b,c\n1,2,3\n",
 				"4,5,6\n7,8,9",
 			},
+			expectedRowCount: []int{
+				2,
+				2,
+			},
 		},
 		{
 			name: "leftover rows",
@@ -52,6 +58,10 @@ func TestScan(t *testing.T) {
 			expected: []string{
 				"a,b,c\n1,2,3\n4,5,6\n",
 				"7,8,9",
+			},
+			expectedRowCount: []int{
+				3,
+				1,
 			},
 		},
 		{
@@ -69,6 +79,10 @@ func TestScan(t *testing.T) {
 				"1,2,3\n4,5,6\n",
 				"7,8,9",
 			},
+			expectedRowCount: []int{
+				2,
+				1,
+			},
 		},
 		{
 			name: "scan limit",
@@ -82,6 +96,10 @@ func TestScan(t *testing.T) {
 			expected: []string{
 				"a,b,c\n",
 				"1,2,3\n",
+			},
+			expectedRowCount: []int{
+				1,
+				1,
 			},
 		},
 		{
@@ -110,6 +128,10 @@ func TestScan(t *testing.T) {
 				strings.Repeat("1111", 4096) + "\n" + strings.Repeat("2222", 4096) + "\n",
 				strings.Repeat("3333", 4096) + "\n" + strings.Repeat("4444", 4096),
 			},
+			expectedRowCount: []int{
+				2,
+				2,
+			},
 		},
 		{
 			name: "long lines with limit",
@@ -125,6 +147,10 @@ func TestScan(t *testing.T) {
 				strings.Repeat("1111", 4096) + "\n" + strings.Repeat("2222", 4096) + "\n",
 				strings.Repeat("3333", 4096) + "\n",
 			},
+			expectedRowCount: []int{
+				2,
+				1,
+			},
 		},
 		{
 			name: "long lines with header and limit",
@@ -139,6 +165,9 @@ func TestScan(t *testing.T) {
 			limit: 2,
 			expected: []string{
 				strings.Repeat("2222", 4096) + "\n" + strings.Repeat("3333", 4096) + "\n",
+			},
+			expectedRowCount: []int{
+				2,
 			},
 		},
 		{
@@ -169,6 +198,10 @@ d"
 7,8,"9
 10"`,
 			},
+			expectedRowCount: []int{
+				2,
+				2,
+			},
 		},
 		{
 			name: "quoted multi-line rows with skipped header lines",
@@ -197,6 +230,10 @@ d"
 				`7,8,"9
 10"`,
 			},
+			expectedRowCount: []int{
+				2,
+				1,
+			},
 		},
 		{
 			name:  "custom-quoted multi-line rows",
@@ -215,6 +252,9 @@ d"
 d'
 1,'2
 3',4`,
+			},
+			expectedRowCount: []int{
+				2,
 			},
 		},
 		{
@@ -235,6 +275,9 @@ d"
 1,"2
 3",4`,
 			},
+			expectedRowCount: []int{
+				2,
+			},
 		},
 	}
 
@@ -246,9 +289,11 @@ d"
 			// Collector for the scanned row batches.
 			go func() {
 				var actual []string
-
+				i := 0
 				for buf := range rowChan {
+					assert.EqualValues(t, c.expectedRowCount[i], buf.Location.RowCount, "on batch %d", i)
 					actual = append(actual, string(bytes.Join(buf.Data, nil)))
+					i++
 				}
 
 				resultChan <- actual
