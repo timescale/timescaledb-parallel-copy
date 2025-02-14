@@ -83,7 +83,13 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 	err = tr.setCompleted(ctx, tx)
 	if err != nil {
 		if isDuplicateKeyError(err) {
-			trState, err := tr.Get(ctx, tx)
+			connx, err := db.Connx(ctx)
+			if err != nil {
+				return 0, fmt.Errorf("acquiring DBx connection for transaction row: %w", err)
+			}
+			defer connx.Close()
+
+			trState, err := tr.Get(ctx, connx)
 			if err != nil {
 				return 0, fmt.Errorf("failed to get transaction row: %w", err)
 			}

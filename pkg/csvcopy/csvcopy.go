@@ -318,9 +318,9 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) 
 			start := time.Now()
 			rows, err := copyFromBatch(ctx, dbx, batch, copyCmd)
 			if err != nil {
-				err = c.handleCopyError(ctx, dbx, batch, err)
-				if err != nil {
-					return err
+				handleErr := c.handleCopyError(ctx, dbx, batch, err)
+				if handleErr != nil {
+					return handleErr
 				}
 			}
 			atomic.AddInt64(&c.insertedRows, rows)

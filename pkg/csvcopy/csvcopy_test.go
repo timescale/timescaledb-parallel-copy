@@ -92,6 +92,7 @@ func TestWriteDataToCSV(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(2), rowCount)
 	assert.Equal(t, int64(2), copier.GetInsertedRows())
+	assert.Equal(t, int64(0), copier.GetSkippedRows())
 
 	rows, err := connx.QueryContext(ctx, "select * from public.metrics")
 	require.NoError(t, err)
@@ -193,7 +194,7 @@ func TestWriteDataToCSVWithHeader(t *testing.T) {
 
 	assert.EqualValues(t, 2, int(r.InsertedRows))
 	assert.EqualValues(t, 2, int(r.TotalRows))
-
+	assert.EqualValues(t, 0, int(r.SkippedRows))
 	var rowCount int64
 	err = connx.QueryRowContext(ctx, "select count(*) from public.metrics").Scan(&rowCount)
 	assert.NoError(t, err)
@@ -297,6 +298,7 @@ func TestErrorAtRow(t *testing.T) {
 	require.NotNil(t, r)
 	assert.EqualValues(t, 2, int(r.InsertedRows))
 	assert.EqualValues(t, 4, int(r.TotalRows))
+	assert.EqualValues(t, 0, int(r.SkippedRows))
 
 	errAtRow := &ErrAtRow{}
 	assert.ErrorAs(t, err, &errAtRow)
@@ -379,7 +381,7 @@ func TestErrorAtRowWithHeader(t *testing.T) {
 	require.NotNil(t, r)
 	assert.EqualValues(t, 2, int(r.InsertedRows))
 	assert.EqualValues(t, 4, int(r.TotalRows))
-
+	assert.EqualValues(t, 0, int(r.SkippedRows))
 	errAtRow := &ErrAtRow{}
 	assert.ErrorAs(t, err, &errAtRow)
 	assert.EqualValues(t, 4, errAtRow.RowAtLocation())
@@ -464,7 +466,7 @@ func TestWriteReportProgress(t *testing.T) {
 
 	assert.EqualValues(t, 2, int(r.InsertedRows))
 	assert.EqualValues(t, 2, int(r.TotalRows))
-
+	assert.EqualValues(t, 0, int(r.SkippedRows))
 	require.True(t, atLeastOneReport)
 
 	var rowCount int64
@@ -556,7 +558,7 @@ func TestFailedBatchHandlerContinue(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 4, int(result.InsertedRows))
 	require.EqualValues(t, 6, int(result.TotalRows))
-
+	require.EqualValues(t, 0, int(result.SkippedRows))
 	require.Contains(t, fs.Files, 2)
 	require.Equal(t, fs.Files[2].String(), "24,qased,2.4\n24,qased,hello\n")
 	require.Contains(t, fs.Errors, 2)
@@ -633,6 +635,7 @@ func TestFailedBatchHandlerStop(t *testing.T) {
 	require.Error(t, err)
 	require.EqualValues(t, 2, int(result.InsertedRows))
 	require.EqualValues(t, 4, int(result.TotalRows))
+	require.EqualValues(t, 0, int(result.SkippedRows))
 
 	require.Contains(t, fs.Files, 2)
 	require.Equal(t, fs.Files[2].String(), "24,qased,2.4\n24,qased,hello\n")
@@ -735,6 +738,8 @@ func TestFailedBatchHandlerFailure(t *testing.T) {
 	require.NotNil(t, r)
 	require.EqualValues(t, 2, int(r.InsertedRows))
 	require.EqualValues(t, 4, int(r.TotalRows))
+	require.EqualValues(t, 0, int(r.SkippedRows))
+
 	require.ErrorContains(t, err, "couldn't handle error")
 
 }
@@ -811,7 +816,10 @@ func TestTransactionState(t *testing.T) {
 	require.NoError(t, err)
 	result, err := copier.Copy(context.Background(), reader)
 	require.NoError(t, err)
-	require.EqualValues(t, 4, result.InsertedRows)
+
+	assert.EqualValues(t, 6, int(result.TotalRows))
+	assert.EqualValues(t, 4, result.InsertedRows)
+	assert.EqualValues(t, 0, int(result.SkippedRows))
 
 	batch1, row, err := LoadTransaction(ctx, connx, "test-file-id")
 	require.NoError(t, err)
@@ -918,6 +926,7 @@ func TestTransactionIdempotency(t *testing.T) {
 	// ensure only 4 rows are inserted
 	assert.EqualValues(t, 4, result.InsertedRows)
 	assert.EqualValues(t, 6, result.TotalRows)
+	assert.EqualValues(t, 0, int(result.SkippedRows))
 
 	batch1, row, err := LoadTransaction(ctx, connx, "test-file-id")
 	require.NoError(t, err)
@@ -950,6 +959,7 @@ func TestTransactionIdempotency(t *testing.T) {
 	// ensure no rows are inserted
 	assert.EqualValues(t, 0, result.InsertedRows)
 	assert.EqualValues(t, 6, result.TotalRows)
+	assert.EqualValues(t, 4, int(result.SkippedRows))
 
 	batch1, row, err = LoadTransaction(ctx, connx, "test-file-id")
 	require.NoError(t, err)
