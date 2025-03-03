@@ -120,9 +120,9 @@ func TestWriteDataToCSV(t *testing.T) {
 
 	// Check if the table does not exist because the importID was not provided
 	var tableExists bool
-	err = connx.QueryRowContext(ctx, "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'timescaledb_parallel_copy_transactions')").Scan(&tableExists)
+	err = connx.QueryRowContext(ctx, "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'timescaledb_parallel_copy.transactions')").Scan(&tableExists)
 	require.NoError(t, err)
-	require.False(t, tableExists, "Table timescaledb_parallel_copy_transactions exists")
+	require.False(t, tableExists, "Table timescaledb_parallel_copy.transactions exists")
 }
 
 func TestWriteDataToCSVWithHeader(t *testing.T) {
@@ -227,9 +227,9 @@ func TestWriteDataToCSVWithHeader(t *testing.T) {
 
 	// Check if the table does not exist because the importID was not provided
 	var tableExists bool
-	err = connx.QueryRowContext(ctx, "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'timescaledb_parallel_copy_transactions')").Scan(&tableExists)
+	err = connx.QueryRowContext(ctx, "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'timescaledb_parallel_copy.transactions')").Scan(&tableExists)
 	require.NoError(t, err)
-	require.False(t, tableExists, "Table timescaledb_parallel_copy_transactions exists")
+	require.False(t, tableExists, "Table timescaledb_parallel_copy.transactions exists")
 }
 
 func TestErrorAtRow(t *testing.T) {
@@ -985,5 +985,137 @@ func TestTransactionIdempotency(t *testing.T) {
 	require.Equal(t, `24,qased,2.4
 24,qased,hello
 `, string(failedBatchContent))
+
+}
+
+func TestTransactionIdempotencyWindow(t *testing.T) {
+	ctx := context.Background()
+
+	pgContainer, err := postgres.Run(ctx,
+		"postgres:15.3-alpine",
+		postgres.WithDatabase("test-db"),
+		postgres.WithUsername("postgres"),
+		postgres.WithPassword("postgres"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).WithStartupTimeout(5*time.Second)),
+	)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		err := pgContainer.Terminate(ctx)
+		require.NoError(t, err)
+	})
+
+	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	require.NoError(t, err)
+
+	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
+	require.NoError(t, err)
+	defer db.Close()
+
+	connx, err := db.Connx(ctx)
+	require.NoError(t, err)
+	defer connx.Close()
+
+	_, err = connx.ExecContext(ctx, "create table public.metrics (device_id int, label text, value float8)")
+	require.NoError(t, err)
+
+	// Create a temporary CSV file
+	tmpfile, err := os.CreateTemp("", "example")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	// Write data to the CSV file
+	writer := csv.NewWriter(tmpfile)
+
+	data := [][]string{
+		// Batch 1
+		{"42", "xasev", "4.2"},
+		{"24", "qased", "2.4"},
+		// Batch 2
+		{"24", "qased", "2.4"},
+		{"24", "qased", "hello"},
+		// Batch 3
+		{"24", "qased", "2.4"},
+		{"24", "qased", "2.4"},
+	}
+
+	for _, record := range data {
+		if err := writer.Write(record); err != nil {
+			t.Fatalf("Error writing record to CSV: %v", err)
+		}
+	}
+
+	writer.Flush()
+
+	{
+		copier, err := NewCopier(connStr, "metrics",
+			WithColumns("device_id,label,value"),
+			WithBatchSize(2),
+			WithBatchErrorHandler(BatchHandlerNoop()),
+			WithImportID("test-file-id"),
+		)
+		require.NoError(t, err)
+		reader, err := os.Open(tmpfile.Name())
+		require.NoError(t, err)
+
+		result, err := copier.Copy(context.Background(), reader)
+		require.NoError(t, err)
+		// ensure only 4 rows are inserted
+		assert.EqualValues(t, 4, result.InsertedRows)
+		assert.EqualValues(t, 6, result.TotalRows)
+		assert.EqualValues(t, 0, int(result.SkippedRows))
+	}
+
+	// Check idempotency window is working
+	{
+		_, err = tmpfile.Seek(0, 0)
+		require.NoError(t, err)
+
+		reader, err := os.Open(tmpfile.Name())
+		require.NoError(t, err)
+
+		copier, err := NewCopier(connStr, "metrics",
+			WithColumns("device_id,label,value"),
+			WithBatchSize(2),
+			WithBatchErrorHandler(BatchHandlerNoop()),
+			WithImportID("test-file-id"),
+		)
+		require.NoError(t, err)
+
+		result, err := copier.Copy(context.Background(), reader)
+		require.NoError(t, err)
+		// ensure no rows are inserted
+		assert.EqualValues(t, 0, result.InsertedRows)
+		assert.EqualValues(t, 6, result.TotalRows)
+		assert.EqualValues(t, 4, int(result.SkippedRows))
+	}
+
+	// Run again with a different idempotency window
+	{
+		_, err = tmpfile.Seek(0, 0)
+		require.NoError(t, err)
+
+		reader, err := os.Open(tmpfile.Name())
+		require.NoError(t, err)
+
+		copier, err := NewCopier(connStr, "metrics",
+			WithColumns("device_id,label,value"),
+			WithBatchSize(2),
+			WithBatchErrorHandler(BatchHandlerNoop()),
+			WithImportID("test-file-id"),
+			WithIdempotencyWindow(1*time.Millisecond), // Ensures cleanup is done
+		)
+		require.NoError(t, err)
+
+		result, err := copier.Copy(context.Background(), reader)
+		require.NoError(t, err)
+
+		// Ensure rows are inserted again
+		assert.EqualValues(t, 4, result.InsertedRows)
+		assert.EqualValues(t, 6, result.TotalRows)
+		assert.EqualValues(t, 0, int(result.SkippedRows))
+	}
 
 }

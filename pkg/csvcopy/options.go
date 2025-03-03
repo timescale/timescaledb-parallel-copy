@@ -258,3 +258,16 @@ func WithImportID(id string) Option {
 		return nil
 	}
 }
+
+// WithIdempotencyWindow sets the idempotency window for the import operation
+// Records older than the window will be deleted from the transaction table
+// Default is 4 weeks
+func WithIdempotencyWindow(window time.Duration) Option {
+	return func(c *Copier) error {
+		if window < 0 {
+			return errors.New("idempotency window must be greater than zero")
+		}
+		c.idempotencyWindow = window
+		return nil
+	}
+}

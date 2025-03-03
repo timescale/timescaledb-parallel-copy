@@ -52,6 +52,7 @@ type Copier struct {
 	verbose           bool
 	skip              int
 	importID          string
+	idempotencyWindow time.Duration
 
 	// Rows that are inserted in the database by this copier instance
 	insertedRows int64
@@ -73,21 +74,22 @@ func NewCopier(
 		tableName:  tableName,
 
 		// Defaults
-		schemaName:      "public",
-		logger:          &noopLogger{},
-		copyOptions:     "CSV",
-		splitCharacter:  ",",
-		quoteCharacter:  "",
-		escapeCharacter: "",
-		columns:         "",
-		workers:         1,
-		limit:           0,
-		batchSize:       5000,
-		logBatches:      false,
-		reportingPeriod: 0,
-		verbose:         false,
-		skip:            0,
-		importID:        "",
+		schemaName:        "public",
+		logger:            &noopLogger{},
+		copyOptions:       "CSV",
+		splitCharacter:    ",",
+		quoteCharacter:    "",
+		escapeCharacter:   "",
+		columns:           "",
+		workers:           1,
+		limit:             0,
+		batchSize:         5000,
+		logBatches:        false,
+		reportingPeriod:   0,
+		verbose:           false,
+		skip:              0,
+		importID:          "",
+		idempotencyWindow: 28 * 24 * time.Hour, // 4 weeks
 	}
 
 	for _, o := range options {
@@ -129,6 +131,9 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	if c.HasImportID() {
 		if err := ensureTransactionTable(ctx, c.connString); err != nil {
 			return Result{}, fmt.Errorf("failed to ensure transaction table, %w", err)
+		}
+		if err := cleanOldTransactions(ctx, c.connString, c.idempotencyWindow); err != nil {
+			return Result{}, fmt.Errorf("failed to clean old transactions, %w", err)
 		}
 	}
 

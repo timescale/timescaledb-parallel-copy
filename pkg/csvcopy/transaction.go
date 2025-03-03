@@ -56,7 +56,7 @@ func newTransactionAt(loc Location) *Transaction {
 
 func (tr Transaction) setCompleted(ctx context.Context, conn sqlx.ExecerContext) error {
 	sql := `
-	INSERT INTO timescaledb_parallel_copy_transactions (
+	INSERT INTO timescaledb_parallel_copy.transactions (
 		import_id, start_row, row_count, byte_offset, byte_len,
 		created_at, state, failure_reason
 	)
@@ -68,7 +68,7 @@ func (tr Transaction) setCompleted(ctx context.Context, conn sqlx.ExecerContext)
 
 func (tr Transaction) setFailed(ctx context.Context, conn sqlx.ExecerContext, reason string) error {
 	sql := `
-	INSERT INTO timescaledb_parallel_copy_transactions (
+	INSERT INTO timescaledb_parallel_copy.transactions (
 		import_id, start_row, row_count, byte_offset, byte_len,
 		created_at, state, failure_reason
 	)
@@ -88,7 +88,7 @@ func getTransactionRow(ctx context.Context, conn sqlx.QueryerContext, fileID str
 
 	err := conn.QueryRowxContext(ctx, `
 		SELECT import_id, start_row, row_count, byte_offset, byte_len, created_at, state, failure_reason
-		FROM timescaledb_parallel_copy_transactions
+		FROM timescaledb_parallel_copy.transactions
 		WHERE import_id = $1 AND start_row = $2
 		LIMIT 1
 	`, fileID, startRow).Scan(
@@ -111,7 +111,7 @@ func (tr Transaction) Next(ctx context.Context, conn sqlx.QueryerContext) (*Tran
 
 	err := conn.QueryRowxContext(ctx, `
 		SELECT import_id, start_row, row_count, byte_offset, byte_len, created_at, state, failure_reason
-		FROM timescaledb_parallel_copy_transactions
+		FROM timescaledb_parallel_copy.transactions
 		WHERE import_id = $1 AND start_row > $2
 		ORDER BY start_row ASC
 		LIMIT 1
@@ -150,7 +150,9 @@ func ensureTransactionTable(ctx context.Context, connString string) error {
 	defer connx.Close()
 
 	sql := `
-	CREATE TABLE IF NOT EXISTS timescaledb_parallel_copy_transactions (
+	CREATE SCHEMA IF NOT EXISTS timescaledb_parallel_copy;
+
+	CREATE TABLE IF NOT EXISTS timescaledb_parallel_copy.transactions (
 		import_id TEXT NOT NULL,
 		start_row BIGINT NOT NULL,
 		row_count BIGINT NOT NULL,
@@ -160,14 +162,41 @@ func ensureTransactionTable(ctx context.Context, connString string) error {
 		state TEXT NOT NULL,
 		failure_reason TEXT DEFAULT NULL,
 		PRIMARY KEY (import_id, start_row)
+	) WITH (
+		autovacuum_enabled = on
 	);
 
 	-- Index for efficient lookups and ordering by import_id and start_row
 	-- Used when finding the next batch to process for a specific import
 	CREATE INDEX IF NOT EXISTS idx_transactions_import_start
-	ON timescaledb_parallel_copy_transactions (import_id, start_row);
+	ON timescaledb_parallel_copy.transactions (import_id, start_row);
+
+	-- Index for efficient cleanup of old transactions
+	CREATE INDEX IF NOT EXISTS idx_transactions_created_at
+	ON timescaledb_parallel_copy.transactions (created_at);
 	`
 
 	_, err = connx.ExecContext(ctx, sql)
+	return err
+}
+
+func cleanOldTransactions(ctx context.Context, connString string, duration time.Duration) error {
+	dbx, err := connect(connString)
+	if err != nil {
+		return fmt.Errorf("failed to connect to database, %w", err)
+	}
+	defer dbx.Close()
+
+	connx, err := dbx.Connx(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to connect to database, %w", err)
+	}
+	defer connx.Close()
+
+	sql := `
+	DELETE FROM timescaledb_parallel_copy.transactions
+	WHERE created_at < NOW() - make_interval(secs => $1::numeric / 1000);`
+
+	_, err = connx.ExecContext(ctx, sql, duration.Milliseconds())
 	return err
 }
