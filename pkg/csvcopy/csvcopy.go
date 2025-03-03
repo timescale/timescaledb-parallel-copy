@@ -132,6 +132,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		if err := ensureTransactionTable(ctx, c.connString); err != nil {
 			return Result{}, fmt.Errorf("failed to ensure transaction table, %w", err)
 		}
+		c.logger.Infof("Cleaning old transactions older than %s", c.idempotencyWindow)
 		if err := cleanOldTransactions(ctx, c.connString, c.idempotencyWindow); err != nil {
 			return Result{}, fmt.Errorf("failed to clean old transactions, %w", err)
 		}
