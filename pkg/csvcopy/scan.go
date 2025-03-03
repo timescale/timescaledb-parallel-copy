@@ -128,7 +128,7 @@ func (l Location) HasImportID() bool {
 func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) error {
 	var rowsRead int64
 	counter := &CountReader{Reader: r}
-	reader := bufio.NewReader(counter)
+	reader := bufio.NewReaderSize(counter, 50*1024*1024) // 50 MB buffer
 
 	for skip := opts.Skip; skip > 0; {
 		// The use of ReadLine() here avoids copying or buffering data that
