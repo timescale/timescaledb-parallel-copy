@@ -154,6 +154,17 @@ func WithLimit(limit int64) Option {
 	}
 }
 
+// WithBufferSize sets the buffer size for the file reader
+func WithBufferSize(bufferSize int) Option {
+	return func(c *Copier) error {
+		if bufferSize < 0 {
+			return errors.New("buffer size must be greater than zero")
+		}
+		c.bufferSize = bufferSize
+		return nil
+	}
+}
+
 // WithBatchSize sets the rows processed on each batch
 func WithBatchSize(batchSize int) Option {
 	return func(c *Copier) error {

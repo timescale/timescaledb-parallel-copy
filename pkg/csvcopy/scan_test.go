@@ -21,6 +21,7 @@ func TestScan(t *testing.T) {
 		name             string
 		input            []string
 		size             int
+		bufferSize       int
 		skip             int
 		limit            int64
 		quote            rune // default '"'
@@ -279,6 +280,26 @@ d"
 				2,
 			},
 		},
+		{
+			name: "Split based on byte size",
+			input: []string{
+				"a,b",
+				"1,2",
+				"444,555",
+				"777,558",
+			},
+			bufferSize: 10,
+			expected: []string{
+				"a,b\n1,2\n",
+				"444,555\n",
+				"777,558",
+			},
+			expectedRowCount: []int{
+				2,
+				1,
+				1,
+			},
+		},
 	}
 
 	for _, c := range cases {
@@ -291,6 +312,7 @@ d"
 				var actual []string
 				i := 0
 				for buf := range rowChan {
+					assert.Less(t, i, len(c.expectedRowCount), "expected more rows than actual")
 					assert.EqualValues(t, c.expectedRowCount[i], buf.Location.RowCount, "on batch %d", i)
 					actual = append(actual, string(bytes.Join(buf.Data, nil)))
 					i++
@@ -302,16 +324,106 @@ d"
 			all := strings.Join(c.input, "\n")
 			reader := strings.NewReader(all)
 			opts := scanOptions{
-				Size:   c.size,
-				Skip:   c.skip,
-				Limit:  c.limit,
-				Quote:  byte(c.quote),
-				Escape: byte(c.escape),
+				Size:       c.size,
+				Skip:       c.skip,
+				Limit:      c.limit,
+				Quote:      byte(c.quote),
+				Escape:     byte(c.escape),
+				BufferSize: 10 * 1024 * 1024,
+			}
+			if c.bufferSize > 0 {
+				opts.BufferSize = c.bufferSize
 			}
 
 			err := scan(context.Background(), reader, rowChan, opts)
 			if err != nil {
 				t.Fatalf("Scan() returned error: %v", err)
+			}
+
+			// Check results.
+			close(rowChan)
+			actual := <-resultChan
+
+			if !reflect.DeepEqual(actual, c.expected) {
+				t.Errorf("Scan() returned unexpected batch results")
+				t.Logf("got:\n%q", actual)
+				t.Logf("want:\n%q", c.expected)
+			}
+		})
+	}
+
+	invalidInputCases := []struct {
+		name             string
+		input            []string
+		size             int
+		bufferSize       int
+		skip             int
+		limit            int64
+		quote            rune // default '"'
+		escape           rune // default is c.quote
+		expected         []string
+		expectedRowCount []int
+		expectedErrorMsg string
+	}{
+		{
+			// Because the buffer cannot hold the entire line, it will just be able to
+			// parse the headers. After that it will error due to buffer too small.
+			name: "fail if line is too long",
+			input: []string{
+				"value",
+				strings.Repeat("1", 4096),
+				strings.Repeat("2", 4096),
+			},
+			bufferSize: 2048,
+			expected: []string{
+				"value\n",
+			},
+			expectedRowCount: []int{
+				1,
+			},
+			expectedErrorMsg: "no newline found, buffer too small",
+		},
+	}
+
+	for _, c := range invalidInputCases {
+		t.Run(c.name, func(t *testing.T) {
+			rowChan := make(chan Batch)
+			resultChan := make(chan []string)
+
+			// Collector for the scanned row batches.
+			go func() {
+				var actual []string
+				i := 0
+				for buf := range rowChan {
+					assert.Less(t, i, len(c.expectedRowCount), "expected more rows than actual")
+					assert.EqualValues(t, c.expectedRowCount[i], buf.Location.RowCount, "on batch %d", i)
+					actual = append(actual, string(bytes.Join(buf.Data, nil)))
+					i++
+				}
+
+				resultChan <- actual
+			}()
+
+			all := strings.Join(c.input, "\n")
+			reader := strings.NewReader(all)
+			opts := scanOptions{
+				Size:       c.size,
+				Skip:       c.skip,
+				Limit:      c.limit,
+				Quote:      byte(c.quote),
+				Escape:     byte(c.escape),
+				BufferSize: 10 * 1024 * 1024,
+			}
+			if c.bufferSize > 0 {
+				opts.BufferSize = c.bufferSize
+			}
+
+			err := scan(context.Background(), reader, rowChan, opts)
+			if c.expectedErrorMsg != "" && err == nil {
+				t.Fatalf("Scan() returned no error, expected error")
+			}
+			if c.expectedErrorMsg != "" && err != nil && err.Error() != c.expectedErrorMsg {
+				t.Fatalf("Scan() returned error: %v, expected error: %v", err, c.expectedErrorMsg)
 			}
 
 			// Check results.

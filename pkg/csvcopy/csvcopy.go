@@ -45,6 +45,7 @@ type Copier struct {
 	columns           string
 	workers           int
 	limit             int64
+	bufferSize        int
 	batchSize         int
 	logBatches        bool
 	reportingPeriod   time.Duration
@@ -83,6 +84,7 @@ func NewCopier(
 		columns:           "",
 		workers:           1,
 		limit:             0,
+		bufferSize:        10 * 1024 * 1024, // 10 MB
 		batchSize:         5000,
 		logBatches:        false,
 		reportingPeriod:   0,
@@ -174,10 +176,11 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	}
 
 	opts := scanOptions{
-		Size:     c.batchSize,
-		Skip:     c.skip,
-		Limit:    c.limit,
-		ImportID: c.importID,
+		Size:       c.batchSize,
+		Skip:       c.skip,
+		Limit:      c.limit,
+		ImportID:   c.importID,
+		BufferSize: c.bufferSize,
 	}
 
 	if c.quoteCharacter != "" {
@@ -339,7 +342,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) 
 
 			if c.logBatches {
 				took := time.Since(start)
-				fmt.Printf("[BATCH] starting at row %d, took %v, batch size %d, row rate %f/sec\n", batch.Location.StartRow, took, batch.Location.RowCount, float64(batch.Location.RowCount)/float64(took.Seconds()))
+				fmt.Printf("[BATCH] starting at row %d, took %v, batch rows %d, batch bytes %d, row rate %f/sec\n", batch.Location.StartRow, took, batch.Location.RowCount, batch.Location.ByteLen, float64(batch.Location.RowCount)/float64(took.Seconds()))
 			}
 		}
 	}
@@ -373,7 +376,7 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 		failHandlerError = NewErrStop(errAt)
 	}
 
-	c.logger.Infof("handling error %#v", failHandlerError)
+	c.logger.Infof("handling error %s", failHandlerError.Error())
 
 	if batch.Location.HasImportID() && !isTemporaryError(failHandlerError) {
 		connx, err := db.Connx(ctx)

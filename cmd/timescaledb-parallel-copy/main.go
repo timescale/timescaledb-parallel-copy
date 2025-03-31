@@ -35,6 +35,7 @@ var (
 
 	fromFile            string
 	columns             string
+	bufferSize          int
 	skipHeader          bool
 	headerLinesCnt      int
 	batchErrorOutputDir string
@@ -75,6 +76,7 @@ func init() {
 
 	flag.StringVar(&importID, "import-id", "", "ImportID to guarantee idempotency")
 	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert")
+	flag.IntVar(&bufferSize, "buffer-size", 10*1024*1024, "Number of bytes per insert")
 	flag.Int64Var(&limit, "limit", 0, "Number of rows to insert overall; 0 means to insert all")
 	flag.IntVar(&workers, "workers", 1, "Number of parallel requests to make")
 	flag.BoolVar(&logBatches, "log-batches", false, "Whether to time individual batches.")
@@ -113,6 +115,7 @@ func main() {
 		csvcopy.WithColumns(columns),
 		csvcopy.WithWorkers(workers),
 		csvcopy.WithLimit(limit),
+		csvcopy.WithBufferSize(bufferSize),
 		csvcopy.WithBatchSize(batchSize),
 		csvcopy.WithLogBatches(logBatches),
 		csvcopy.WithReportingPeriod(reportingPeriod),

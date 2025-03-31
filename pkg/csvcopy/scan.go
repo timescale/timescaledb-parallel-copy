@@ -22,6 +22,10 @@ type scanOptions struct {
 	// If the same ImportID is inserted, it will attempt to recover from a previously failed insert.
 	// If data is already inserted, it is a NOOP
 	ImportID string
+
+	// BufferSize is the size of the buffer to use for reading the file
+	// It has to be big enough to hold at least a full row
+	BufferSize int
 }
 
 // Batch represents an operation to copy data into the DB
@@ -115,6 +119,78 @@ func (l Location) HasImportID() bool {
 	return l.ImportID != ""
 }
 
+const maxBufferSize = 50 * 1024 * 1024
+
+// readLines will attempt to read maxLines from the reader by filling the buffer and looking for the
+// last complete line. This data will go into currentSlice. The remaining data will go into reminderSlice.
+//
+// reminder is a slice that contains data returned by the previous call to this function
+// If provided, it will be used to read data before using the reader.
+// If more data is needed, reminder will be returned as previousSlice.
+// It must be appended before current slice to have the complete data.
+//
+// csvStateScanner keeps track of the csv parsing state to properly count lines and handle quoted/escaped values
+//
+// bufferSize is the size of the buffer to use for reading the file. A line must fit in the buffer or it will fails
+//
+// maxLines is the maximum number of lines to read. If -1 it will read be ignored
+func readLines(
+	reader *bufio.Reader,
+	reminder []byte,
+	csvStateScanner *csvRowState,
+	bufferSize int,
+	maxLines int,
+) (previousSlice []byte, currentSlice []byte, reminderSlice []byte, err error) {
+	i, linesInPreviousReminder := csvStateScanner.LastLineIndex(reminder, maxLines)
+	if linesInPreviousReminder == maxLines {
+		currentSlice = reminder[:i]
+		csvStateScanner.Scan(currentSlice)
+		reminderSlice = reminder[i:]
+		return nil, currentSlice, reminderSlice, nil
+	}
+	csvStateScanner.Scan(reminder)
+
+	// TODO: use a buffer pool
+	buff := make([]byte, bufferSize-len(reminder))
+
+	N := 0
+	for {
+		n, err := reader.Read(buff[N:])
+		N += n
+		if err != nil {
+			if err == io.EOF {
+				i, lineCount := csvStateScanner.LastLineIndex(buff[:N], maxLines-linesInPreviousReminder)
+				if i == -1 {
+					return reminder, buff[:N], nil, nil
+				}
+				// if we couldn't get the desired number of lines, return everything?
+				if lineCount != maxLines {
+					currentSlice = buff[:N]
+					csvStateScanner.Scan(buff[:N])
+					return reminder, currentSlice, nil, nil
+				}
+				currentSlice = buff[:i]
+				csvStateScanner.Scan(buff[:i])
+				reminderSlice = buff[i:N]
+				return reminder, currentSlice, reminderSlice, nil
+			}
+			return nil, nil, nil, fmt.Errorf("reading buffer: %w", err)
+		}
+		if N == len(buff) {
+			break
+		}
+	}
+
+	i, _ = csvStateScanner.LastLineIndex(buff, maxLines-linesInPreviousReminder)
+	if i != -1 {
+		currentSlice = buff[:i]
+		csvStateScanner.Scan(currentSlice)
+		reminderSlice = buff[i:N]
+		return reminder, currentSlice, reminderSlice, nil
+	}
+	return nil, nil, nil, fmt.Errorf("no newline found, buffer too small")
+}
+
 // scan reads all lines from an io.Reader, partitions them into net.Buffers with
 // opts.Size rows each, and writes each batch to the out channel. If opts.Skip
 // is greater than zero, that number of lines will be discarded from the
@@ -126,9 +202,16 @@ func (l Location) HasImportID() bool {
 // rows to be split over multiple lines, the caller may provide opts.Quote and
 // opts.Escape as the QUOTE and ESCAPE characters used for the CSV input.
 func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) error {
-	var rowsRead int64
+
 	counter := &CountReader{Reader: r}
-	reader := bufio.NewReaderSize(counter, 50*1024*1024) // 50 MB buffer
+
+	// Default buffer size is 10MB
+	bufferSize := 10 * 1024 * 1024
+	if opts.BufferSize != 0 {
+		bufferSize = opts.BufferSize
+	}
+
+	reader := bufio.NewReaderSize(counter, bufferSize)
 
 	for skip := opts.Skip; skip > 0; {
 		// The use of ReadLine() here avoids copying or buffering data that
@@ -157,100 +240,69 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 		escape = opts.Escape
 	}
 
-	scanner := makeCSVRowState(quote, escape)
-
-	// We read a continuous stream of []byte from our buffered reader. Rather
-	// than coalesce all of the incoming slices into a single contiguous buffer
-	// (which would have bad memory usage and performance characteristics for
-	// larger CSV datasets, and be wasted anyway as soon as the underlying
-	// Postgres connection divides the data into smaller CopyData chunks), keep
-	// the slices as-is and store them in net.Buffers, which is a convenient
-	// io.Reader abstraction wrapped over a [][]byte.
-	bufs := make(net.Buffers, 0, opts.Size)
-	var bufferedRows int
-
-	// finishedRow is true if the current row has been fully read and counted
-	finishedRow := true
+	csvStateScanner := makeCSVRowState(quote, escape)
+	previousReminderSlice := []byte{}
 	byteStart := counter.Total - reader.Buffered()
+	totalRows := 0
 	for {
-		eol := false
-
-		data, err := reader.ReadSlice('\n')
-
-		switch err {
-		case bufio.ErrBufferFull:
-			// This is fine; add the data we have to the output and look for the
-			// end of line during the next iteration.
-
-		case io.EOF:
-			// Also fine, but unlike ErrBufferFull we won't have another
-			// iteration after this. We still need to handle any data that was
-			// returned.
-		case nil:
-			// We read a full line from the input.
-			eol = true
-
-		default:
-			return err
+		readNRows := -1
+		if opts.Size != 0 {
+			readNRows = opts.Size
 		}
-
-		if len(data) > 0 {
-			finishedRow = false
-			// ReadSlice doesn't make a copy of the data; to avoid an overwrite
-			// on the next call, we need to make one now.
-			buf := make([]byte, len(data))
-			copy(buf, data)
-			bufs = append(bufs, buf)
-
-			// Figure out whether we're still inside a quoted value, in which
-			// case the row hasn't ended yet even if we're at the end of a line.
-			scanner.Scan(buf)
-			if eol && !scanner.NeedsMore() {
-				finishedRow = true
-				bufferedRows++
-				rowsRead++
-			}
-
-			if bufferedRows >= opts.Size { // dispatch to COPY worker & reset
-				byteEnd := counter.Total - reader.Buffered()
-				select {
-				case out <- newBatch(
-					bufs,
-					newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
-				):
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-				bufs = make(net.Buffers, 0, opts.Size)
-				bufferedRows = 0
-				byteStart = byteEnd
-			}
+		if opts.Limit != 0 {
+			readNRows = min(max(int(opts.Limit)-totalRows, 0), readNRows)
 		}
-
-		// Check termination conditions.
-		if err == io.EOF {
-			// if we have data in the buffer and we are not at the end of a row, we need to count the last row
-			// this can happen if the last row is not terminated by a newline
-			if len(bufs) > 0 && !finishedRow {
-				bufferedRows++
-				rowsRead++
-			}
-			break
-		} else if opts.Limit != 0 && rowsRead >= opts.Limit {
+		if readNRows == 0 {
 			break
 		}
-	}
-	// Finished reading input, make sure last batch goes out.
-	if len(bufs) > 0 {
-		byteEnd := counter.Total - reader.Buffered()
+
+		previousSlice, currentSlice, reminderSlice, err := readLines(reader, previousReminderSlice, csvStateScanner, bufferSize, int(readNRows))
+		if err != nil {
+			if err != io.EOF {
+				return err
+			}
+		}
+
+		// Build a net.Buffers from the slices to reduce allocations
+		bufs := make(net.Buffers, 0)
+		if len(previousSlice) > 0 {
+			bufs = append(bufs, previousSlice)
+		}
+		if len(currentSlice) > 0 {
+			bufs = append(bufs, currentSlice)
+		}
+		if len(bufs) == 0 {
+			// empty, break as there is no more data
+			break
+		}
+		previousReminderSlice = reminderSlice
+
+		byteEnd := byteStart + len(currentSlice)
+		bufferedRows := csvStateScanner.RowCount() - totalRows
+
+		if !csvStateScanner.InNewLine() {
+			// The only situation to get here is when we hit EOF without a new line
+			bufferedRows++
+		}
+
+		loc := newLocation(
+			opts.ImportID,
+			int64(csvStateScanner.RowCount()),
+			bufferedRows,
+			opts.Skip,
+			byteStart,
+			byteEnd-byteStart,
+		)
 		select {
 		case out <- newBatch(
 			bufs,
-			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
+			loc,
 		):
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+		byteStart = byteEnd
+		totalRows = csvStateScanner.RowCount()
 	}
 
 	return nil
@@ -265,6 +317,9 @@ type csvRowState struct {
 	// scan state
 	inQuote  bool // are we in an open quoted value?
 	inEscape bool // are we (potentially) in an open escape sequence?
+
+	rowCount  int  //the number of rows that have been read
+	inNewLine bool // are we at the end of a line?
 }
 
 // makeCSVRowState initializes a new csvRowState with the given delimiters.
@@ -283,11 +338,34 @@ func makeCSVRowState(quote, escape byte) *csvRowState {
 // that is given to Scan. (This property is met by bufio.Reader's ReadSlice
 // method.)
 func (c *csvRowState) Scan(buf []byte) {
-	for _, b := range buf {
+	inQuote, inEscape, rowCount, _ := c.scan(buf, -1)
+	c.rowCount += rowCount
+	c.inQuote = inQuote
+	c.inEscape = inEscape
+}
+
+func (c *csvRowState) LastLineIndex(buf []byte, maxLines int) (int, int) {
+	_, _, rowCount, lastValidLine := c.scan(buf, maxLines)
+	return lastValidLine, rowCount
+}
+
+func (c *csvRowState) scan(buf []byte, maxLines int) (inQuote bool, inEscape bool, rowCount int, lastValidLineIndex int) {
+	// do not modify the state of the scanner
+	inQuote = c.inQuote
+	inEscape = c.inEscape
+
+	lastValidLineIndex = -1
+	for i, b := range buf {
+		if !inQuote {
+			if maxLines != -1 && rowCount >= maxLines {
+				return inQuote, inEscape, rowCount, lastValidLineIndex
+			}
+		}
+
 		// If we think the previous character might have been an escape, the
 		// current character might need to be ignored.
-		if c.inEscape {
-			c.inEscape = false
+		if inEscape {
+			inEscape = false
 
 			// Only the quote and escape delimiters can themselves be escaped.
 			switch b {
@@ -317,23 +395,46 @@ func (c *csvRowState) Scan(buf []byte) {
 			// don't always have the ability to do that here, since we're
 			// operating on a buffer stream.
 			if c.quote == c.escape {
-				c.inQuote = false
+				inQuote = false
 			}
 		}
 
 		// Escape sequences are only recognized inside of a quoted value;
 		// otherwise the escape character has no special meaning.
-		if c.inQuote && (b == c.escape) {
-			c.inEscape = true
+		if inQuote && (b == c.escape) {
+			inEscape = true
 			continue
 		}
 
 		if b == c.quote {
 			// We know this is an unescaped quote delimiter, so we're either
 			// beginning or ending a quoted string.
-			c.inQuote = !c.inQuote
+			inQuote = !inQuote
 		}
+		if !inQuote {
+			if b == '\n' { // look for new lines
+				c.inNewLine = true
+				lastValidLineIndex = i + 1
+				rowCount++
+				continue
+			} else if b == '\r' && c.inNewLine { // handle \r\n as a single newline
+				c.inNewLine = true
+				lastValidLineIndex = i + 1
+				continue
+			}
+			c.inNewLine = false
+		}
+
 	}
+	return inQuote, inEscape, rowCount, lastValidLineIndex
+}
+
+func (c *csvRowState) RowCount() int {
+	return c.rowCount
+}
+
+func (c *csvRowState) InNewLine() bool {
+	return c.inNewLine
 }
 
 // NeedsMore returns true if the current row is incomplete: the previous buffers
