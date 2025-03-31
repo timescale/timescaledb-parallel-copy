@@ -119,8 +119,6 @@ func (l Location) HasImportID() bool {
 	return l.ImportID != ""
 }
 
-const maxBufferSize = 50 * 1024 * 1024
-
 // readLines will attempt to read maxLines from the reader by filling the buffer and looking for the
 // last complete line. This data will go into currentSlice. The remaining data will go into reminderSlice.
 //
