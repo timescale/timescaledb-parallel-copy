@@ -183,7 +183,7 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 	// Postgres connection divides the data into smaller CopyData chunks), keep
 	// the slices as-is and store them in net.Buffers, which is a convenient
 	// io.Reader abstraction wrapped over a [][]byte.
-	bufs := make(net.Buffers, 0, opts.Size)
+	bufs := make(net.Buffers, 0)
 	var bufferedRows int
 
 	// finishedRow is true if the current row has been fully read and counted
@@ -200,7 +200,7 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		bufs = make(net.Buffers, 0, opts.Size)
+		bufs = make(net.Buffers, 0)
 		bufferedRows = 0
 		byteStart = byteEnd
 		return nil
