@@ -44,6 +44,8 @@ var (
 	workers         int
 	limit           int64
 	batchSize       int
+	bufferSize      int
+	batchByteSize   int
 	logBatches      bool
 	reportingPeriod time.Duration
 	verbose         bool
@@ -74,7 +76,9 @@ func init() {
 	flag.BoolVar(&skipBatchErrors, "skip-batch-errors", false, "if true, the copy will continue even if a batch fails")
 
 	flag.StringVar(&importID, "import-id", "", "ImportID to guarantee idempotency")
-	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert")
+	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert. It will be limited by batch-byte-size")
+	flag.IntVar(&bufferSize, "buffer-byte-size", 2*1024*1024, "Number of bytes to buffer, it has to be big enough to hold a full row")
+	flag.IntVar(&batchByteSize, "batch-byte-size", 20*1024*1024, "Max number of bytes to send in a batch")
 	flag.Int64Var(&limit, "limit", 0, "Number of rows to insert overall; 0 means to insert all")
 	flag.IntVar(&workers, "workers", 1, "Number of parallel requests to make")
 	flag.BoolVar(&logBatches, "log-batches", false, "Whether to time individual batches.")
@@ -113,6 +117,8 @@ func main() {
 		csvcopy.WithColumns(columns),
 		csvcopy.WithWorkers(workers),
 		csvcopy.WithLimit(limit),
+		csvcopy.WithBufferSize(bufferSize),
+		csvcopy.WithBatchByteSize(batchByteSize),
 		csvcopy.WithBatchSize(batchSize),
 		csvcopy.WithLogBatches(logBatches),
 		csvcopy.WithReportingPeriod(reportingPeriod),

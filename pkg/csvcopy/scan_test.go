@@ -1,13 +1,13 @@
 package csvcopy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -21,12 +21,15 @@ func TestScan(t *testing.T) {
 		name             string
 		input            []string
 		size             int
+		bufferSize       int
+		batchSize        int
 		skip             int
 		limit            int64
 		quote            rune // default '"'
 		escape           rune // default is c.quote
 		expected         []string
 		expectedRowCount []int
+		expectedError    string
 	}{
 		{
 			name: "basic split",
@@ -279,6 +282,55 @@ d"
 				2,
 			},
 		},
+		{
+			name: "buffer size is smaller than line size",
+			input: []string{
+				strings.Repeat("a", 4096),
+				strings.Repeat("1", 4096),
+				strings.Repeat("2", 4096),
+				strings.Repeat("3", 4096),
+			},
+			size:          2,
+			bufferSize:    1024,
+			expectedError: bufio.ErrBufferFull.Error(),
+		},
+		{
+			name: "batch size is smaller than buffer size",
+			input: []string{
+				strings.Repeat("a", 4096),
+				strings.Repeat("1", 4096),
+				strings.Repeat("2", 4096),
+				strings.Repeat("3", 4096),
+			},
+			size:          2,
+			batchSize:     1024,
+			bufferSize:    2048,
+			expectedError: "batch size is smaller than buffer size",
+		},
+		{
+			name: "batch size is hit before line limit",
+			input: []string{
+				strings.Repeat("a", 4096),
+				strings.Repeat("1", 4096),
+				strings.Repeat("2", 4096),
+				strings.Repeat("3", 4096),
+			},
+			size:       2,
+			batchSize:  5000,
+			bufferSize: 5000,
+			expected: []string{
+				strings.Repeat("a", 4096) + "\n",
+				strings.Repeat("1", 4096) + "\n",
+				strings.Repeat("2", 4096) + "\n",
+				strings.Repeat("3", 4096),
+			},
+			expectedRowCount: []int{
+				1,
+				1,
+				1,
+				1,
+			},
+		},
 	}
 
 	for _, c := range cases {
@@ -302,27 +354,34 @@ d"
 			all := strings.Join(c.input, "\n")
 			reader := strings.NewReader(all)
 			opts := scanOptions{
-				Size:   c.size,
-				Skip:   c.skip,
-				Limit:  c.limit,
-				Quote:  byte(c.quote),
-				Escape: byte(c.escape),
+				Size:           c.size,
+				Skip:           c.skip,
+				Limit:          c.limit,
+				Quote:          byte(c.quote),
+				Escape:         byte(c.escape),
+				BufferByteSize: c.bufferSize,
+				BatchByteSize:  c.batchSize,
 			}
 
 			err := scan(context.Background(), reader, rowChan, opts)
 			if err != nil {
-				t.Fatalf("Scan() returned error: %v", err)
+				if c.expectedError == "" {
+					assert.NoError(t, err)
+				} else {
+					assert.Contains(t, err.Error(), c.expectedError)
+				}
 			}
 
 			// Check results.
 			close(rowChan)
 			actual := <-resultChan
 
-			if !reflect.DeepEqual(actual, c.expected) {
-				t.Errorf("Scan() returned unexpected batch results")
-				t.Logf("got:\n%q", actual)
-				t.Logf("want:\n%q", c.expected)
-			}
+			assert.Equal(t, c.expected, actual)
+			// if !reflect.DeepEqual(actual, c.expected) {
+			// 	t.Errorf("Scan() returned unexpected batch results")
+			// 	t.Logf("got:\n%q", actual)
+			// 	t.Logf("want:\n%q", c.expected)
+			// }
 		})
 	}
 

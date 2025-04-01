@@ -45,6 +45,8 @@ type Copier struct {
 	columns           string
 	workers           int
 	limit             int64
+	bufferSize        int
+	batchByteSize     int
 	batchSize         int
 	logBatches        bool
 	reportingPeriod   time.Duration
@@ -83,6 +85,8 @@ func NewCopier(
 		columns:           "",
 		workers:           1,
 		limit:             0,
+		bufferSize:        10 * 1024 * 1024,
+		batchByteSize:     50 * 1024 * 1024,
 		batchSize:         5000,
 		logBatches:        false,
 		reportingPeriod:   0,
@@ -174,10 +178,12 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	}
 
 	opts := scanOptions{
-		Size:     c.batchSize,
-		Skip:     c.skip,
-		Limit:    c.limit,
-		ImportID: c.importID,
+		Size:           c.batchSize,
+		Skip:           c.skip,
+		Limit:          c.limit,
+		BufferByteSize: c.bufferSize,
+		BatchByteSize:  c.batchByteSize,
+		ImportID:       c.importID,
 	}
 
 	if c.quoteCharacter != "" {
@@ -339,7 +345,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) 
 
 			if c.logBatches {
 				took := time.Since(start)
-				fmt.Printf("[BATCH] starting at row %d, took %v, batch size %d, row rate %f/sec\n", batch.Location.StartRow, took, batch.Location.RowCount, float64(batch.Location.RowCount)/float64(took.Seconds()))
+				fmt.Printf("[BATCH] starting at row %d, took %v, row count %d, byte len %d, row rate %f/sec\n", batch.Location.StartRow, took, batch.Location.RowCount, batch.Location.ByteLen, float64(batch.Location.RowCount)/float64(took.Seconds()))
 			}
 		}
 	}

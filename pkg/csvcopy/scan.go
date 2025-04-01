@@ -11,9 +11,11 @@ import (
 
 // scanOptions contains all the configurable knobs for Scan.
 type scanOptions struct {
-	Size  int   // maximum number of rows per batch
-	Skip  int   // how many header lines to skip at the beginning
-	Limit int64 // total number of rows to scan after the header
+	Size           int   // maximum number of rows per batch, It may be less than this if ChunkByteSize is reached first
+	Skip           int   // how many header lines to skip at the beginning
+	Limit          int64 // total number of rows to scan after the header.
+	BufferByteSize int   // buffer size for the reader. it has to be big enough to hold a full row
+	BatchByteSize  int   // Max byte size for a batch.
 
 	Quote  byte // the QUOTE character; defaults to '"'
 	Escape byte // the ESCAPE character; defaults to QUOTE
@@ -128,7 +130,22 @@ func (l Location) HasImportID() bool {
 func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) error {
 	var rowsRead int64
 	counter := &CountReader{Reader: r}
-	reader := bufio.NewReaderSize(counter, 50*1024*1024) // 50 MB buffer
+
+	bufferSize := 2 * 1024 * 1024 // 2 MB buffer
+	if opts.BufferByteSize > 0 {
+		bufferSize = opts.BufferByteSize
+	}
+
+	batchSize := 20 * 1024 * 1024 // 20 MB batch size
+	if opts.BatchByteSize > 0 {
+		batchSize = opts.BatchByteSize
+	}
+
+	if batchSize < bufferSize {
+		return fmt.Errorf("batch size (%d) is smaller than buffer size (%d)", batchSize, bufferSize)
+	}
+
+	reader := bufio.NewReaderSize(counter, bufferSize)
 
 	for skip := opts.Skip; skip > 0; {
 		// The use of ReadLine() here avoids copying or buffering data that
@@ -172,15 +189,33 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 	// finishedRow is true if the current row has been fully read and counted
 	finishedRow := true
 	byteStart := counter.Total - reader.Buffered()
+
+	// send the current data until the byteEnd
+	send := func(byteEnd int) error {
+		select {
+		case out <- newBatch(
+			bufs,
+			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
+		):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		bufs = make(net.Buffers, 0, opts.Size)
+		bufferedRows = 0
+		byteStart = byteEnd
+		return nil
+	}
 	for {
 		eol := false
+
+		byteEndBeforeLine := counter.Total - reader.Buffered()
 
 		data, err := reader.ReadSlice('\n')
 
 		switch err {
 		case bufio.ErrBufferFull:
-			// This is fine; add the data we have to the output and look for the
-			// end of line during the next iteration.
+			// If we hit buffer full, we do not have enough data to read a full row
+			return fmt.Errorf("reading lines, %w", err)
 
 		case io.EOF:
 			// Also fine, but unlike ErrBufferFull we won't have another
@@ -195,6 +230,16 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 		}
 
 		if len(data) > 0 {
+			byteEnd := counter.Total - reader.Buffered()
+			// Chunk will be bigger than ChunkByteSize if we append the current line. Let's send the data we have int he buffer
+			if byteEnd-byteStart > batchSize {
+				log.Printf("reached max batch size, sending %d rows", bufferedRows)
+				err := send(byteEndBeforeLine)
+				if err != nil {
+					return err
+				}
+			}
+
 			finishedRow = false
 			// ReadSlice doesn't make a copy of the data; to avoid an overwrite
 			// on the next call, we need to make one now.
@@ -204,6 +249,7 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 
 			// Figure out whether we're still inside a quoted value, in which
 			// case the row hasn't ended yet even if we're at the end of a line.
+			// TODO: This may no be a feasible scenario given that we require a full row to be in the buffer.
 			scanner.Scan(buf)
 			if eol && !scanner.NeedsMore() {
 				finishedRow = true
@@ -212,18 +258,10 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 			}
 
 			if bufferedRows >= opts.Size { // dispatch to COPY worker & reset
-				byteEnd := counter.Total - reader.Buffered()
-				select {
-				case out <- newBatch(
-					bufs,
-					newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
-				):
-				case <-ctx.Done():
-					return ctx.Err()
+				err := send(byteEnd)
+				if err != nil {
+					return err
 				}
-				bufs = make(net.Buffers, 0, opts.Size)
-				bufferedRows = 0
-				byteStart = byteEnd
 			}
 		}
 

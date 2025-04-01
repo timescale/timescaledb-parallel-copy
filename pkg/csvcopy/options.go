@@ -154,6 +154,28 @@ func WithLimit(limit int64) Option {
 	}
 }
 
+// WithBufferSize sets the buffer size
+func WithBufferSize(bufferSize int) Option {
+	return func(c *Copier) error {
+		if bufferSize < 16 { // minimum buffer size on bufio.NewReaderSize
+			return errors.New("buffer size must be greater than minimum buffer size (16)")
+		}
+		c.bufferSize = bufferSize
+		return nil
+	}
+}
+
+// WithBatchByteSize sets the max number of bytes to send in a batch
+func WithBatchByteSize(batchByteSize int) Option {
+	return func(c *Copier) error {
+		if batchByteSize < 16 { // minimum buffer size on bufio.NewReaderSize
+			return errors.New("batch byte size must be greater than minimum buffer size (16)")
+		}
+		c.batchByteSize = batchByteSize
+		return nil
+	}
+}
+
 // WithBatchSize sets the rows processed on each batch
 func WithBatchSize(batchSize int) Option {
 	return func(c *Copier) error {
