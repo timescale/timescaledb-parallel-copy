@@ -305,7 +305,7 @@ d"
 			size:          2,
 			batchSize:     1024,
 			bufferSize:    2048,
-			expectedError: "batch size is smaller than buffer size",
+			expectedError: "batch size (1024) is smaller than buffer size (2048)",
 		},
 		{
 			name: "batch size is hit before line limit",
