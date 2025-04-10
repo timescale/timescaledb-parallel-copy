@@ -248,6 +248,7 @@ type ErrAtRow struct {
 
 // RowAtLocation returns the row number taking into account the batch location
 // so the number matches the original file
+// The row 0 is the first row of the file
 func (err *ErrAtRow) RowAtLocation() int {
 	if err.Row == -1 {
 		return -1
