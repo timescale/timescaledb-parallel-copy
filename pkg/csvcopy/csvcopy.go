@@ -252,7 +252,7 @@ func (err *ErrAtRow) RowAtLocation() int {
 	if err.Row == -1 {
 		return -1
 	}
-	return (err.Row + 1) + int(err.BatchLocation.StartRow)
+	return err.Row + int(err.BatchLocation.StartRow)
 }
 
 func ExtractRowFrom(pgerr *pgconn.PgError) int {
@@ -268,7 +268,7 @@ func ExtractRowFrom(pgerr *pgconn.PgError) int {
 		return -1
 	}
 
-	return line
+	return line - 1
 }
 
 func (e ErrAtRow) Error() string {
@@ -356,7 +356,9 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 		Err:           copyErr,
 		BatchLocation: batch.Location,
 	}
-	if pgerr, ok := copyErr.(*pgconn.PgError); ok {
+
+	pgerr := &pgconn.PgError{}
+	if errors.As(copyErr, &pgerr) {
 		errAt.Row = ExtractRowFrom(pgerr)
 	}
 
