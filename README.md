@@ -6,21 +6,26 @@ into [TimescaleDB.](//github.com/timescale/timescaledb/)
 
 ## Installation
 
-### Docker
+<details>
+<summary>Docker</summary>
 
 ```sh
 docker pull timescale/timescaledb-parallel-copy
 ```
+</details>
 
-### Go
+<details>
+<summary>Go</summary>
 
 You need the Go runtime (1.13+) installed, then simply `go get` this repo:
 
 ```sh
 go install github.com/timescale/timescaledb-parallel-copy/cmd/timescaledb-parallel-copy@latest
 ```
+</details>
 
-### Brew
+<details>
+<summary>Brew</summary>
 
 -   Add the TimescaleDB Homebrew tap.
 
@@ -33,8 +38,10 @@ brew tap timescale/tap
 ```sh
 brew install timescaledb-tools
 ```
+</details>
 
-### Debian
+<details>
+<summary>Debian</summary>
 
 -   Install packages needed for the installation.
 
@@ -59,8 +66,10 @@ wget --quiet -O - https://packagecloud.io/timescale/timescaledb/gpgkey | sudo gp
 ```sh
 sudo apt install timescaledb-tools
 ```
+</details>
 
-### Ubuntu
+<details>
+<summary>Ubuntu</summary>
 
 -   Install packages needed for the installation.
 
@@ -85,8 +94,10 @@ wget --quiet -O - https://packagecloud.io/timescale/timescaledb/gpgkey | sudo gp
 ```sh
 sudo apt install timescaledb-tools
 ```
+</details>
 
-### RedHat
+<details>
+<summary>RedHat</summary>
 
 -   Add the TimescaleDB repository.
 
@@ -110,8 +121,10 @@ EOL
 ```sh
 sudo yum install timescaledb-tools
 ```
+</details>
 
-### Fedora
+<details>
+<summary>Fedora</summary>
 
 -   Add the TimescaleDB repository.
 
@@ -135,6 +148,7 @@ EOL
 ```sh
 sudo yum install timescaledb-tools
 ```
+</details>
 
 ## Usage
 
