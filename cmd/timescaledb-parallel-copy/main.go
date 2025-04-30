@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"time"
 
 	"github.com/timescale/timescaledb-parallel-copy/pkg/csvcopy"
@@ -92,7 +93,14 @@ func (l csvCopierLogger) Infof(msg string, args ...interface{}) {
 
 func main() {
 	if showVersion {
-		log.Printf("%s %s (%s %s)\n", binName, version, runtime.GOOS, runtime.GOARCH)
+		buildInfo, ok := debug.ReadBuildInfo()
+		if ok {
+			for _, s := range buildInfo.Settings {
+				log.Printf("\t%s: %s\n", s.Key, s.Value)
+			}
+		}
+
+		log.Printf("%s %s [%s] (%s %s)\n", binName, version, runtime.Version(), runtime.GOOS, runtime.GOARCH)
 		os.Exit(0)
 	}
 
