@@ -54,16 +54,36 @@ func newTransactionAt(loc Location) *Transaction {
 	}
 }
 
-func (tr Transaction) setCompleted(ctx context.Context, conn sqlx.ExecerContext) error {
-	sql := `
+var ErrTransactionAlreadyCompleted = errors.New("transaction already completed")
+
+func (tr Transaction) setCompleted(ctx context.Context, conn sqlx.QueryerContext) error {
+	statement := `
 	INSERT INTO timescaledb_parallel_copy.transactions (
 		import_id, start_row, row_count, byte_offset, byte_len,
 		created_at, state, failure_reason
 	)
 	VALUES ($1, $2, $3, $4, $5, NOW(), 'completed', NULL)
+	-- Allow retries of failed transactions
+	ON CONFLICT (import_id, start_row)
+	DO UPDATE SET
+		state = 'completed',
+		failure_reason = NULL,
+		created_at = NOW()
+	WHERE transactions.state = 'failed'
+	AND transactions.row_count = $3
+	AND transactions.byte_offset = $4
+	AND transactions.byte_len = $5
+	RETURNING true
 	`
-	_, err := conn.ExecContext(ctx, sql, tr.loc.ImportID, tr.loc.StartRow, tr.loc.RowCount, tr.loc.ByteOffset, tr.loc.ByteLen)
-	return err
+	var retry bool
+	err := conn.QueryRowxContext(ctx, statement, tr.loc.ImportID, tr.loc.StartRow, tr.loc.RowCount, tr.loc.ByteOffset, tr.loc.ByteLen).Scan(&retry)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrTransactionAlreadyCompleted
+		}
+		return err
+	}
+	return nil
 }
 
 func (tr Transaction) setFailed(ctx context.Context, conn sqlx.ExecerContext, reason string) error {

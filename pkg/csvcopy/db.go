@@ -3,6 +3,7 @@ package csvcopy
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 
@@ -82,7 +83,7 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 
 	err = tr.setCompleted(ctx, tx)
 	if err != nil {
-		if isDuplicateKeyError(err) {
+		if errors.Is(err, ErrTransactionAlreadyCompleted) {
 			connx, err := db.Connx(ctx)
 			if err != nil {
 				return 0, fmt.Errorf("acquiring DBx connection for transaction row: %w", err)
