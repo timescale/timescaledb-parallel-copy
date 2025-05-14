@@ -70,9 +70,6 @@ func (tr Transaction) setCompleted(ctx context.Context, conn sqlx.QueryerContext
 		failure_reason = NULL,
 		created_at = NOW()
 	WHERE transactions.state = 'failed'
-	AND transactions.row_count = $3
-	AND transactions.byte_offset = $4
-	AND transactions.byte_len = $5
 	RETURNING true
 	`
 	var retry bool
@@ -93,6 +90,13 @@ func (tr Transaction) setFailed(ctx context.Context, conn sqlx.ExecerContext, re
 		created_at, state, failure_reason
 	)
 	VALUES ($1, $2, $3, $4, $5, NOW(), 'failed', $6)
+	ON CONFLICT (import_id, start_row)
+	-- If there was a previous failure, update it
+	DO UPDATE SET
+		state = 'failed',
+		failure_reason = $6,
+		created_at = NOW()
+	WHERE transactions.state = 'failed'
 	`
 	_, err := conn.ExecContext(ctx, sql, tr.loc.ImportID, tr.loc.StartRow, tr.loc.RowCount, tr.loc.ByteOffset, tr.loc.ByteLen, reason)
 	return err

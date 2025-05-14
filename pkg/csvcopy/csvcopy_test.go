@@ -1119,3 +1119,324 @@ func TestTransactionIdempotencyWindow(t *testing.T) {
 	}
 
 }
+
+func TestTransactionFailureRetry(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("will succeed", func(t *testing.T) {
+		pgContainer, err := postgres.Run(ctx,
+			"postgres:15.3-alpine",
+			postgres.WithDatabase("test-db"),
+			postgres.WithUsername("postgres"),
+			postgres.WithPassword("postgres"),
+			testcontainers.WithWaitStrategy(
+				wait.ForLog("database system is ready to accept connections").
+					WithOccurrence(2).WithStartupTimeout(5*time.Second)),
+		)
+		require.NoError(t, err)
+
+		t.Cleanup(func() {
+			err := pgContainer.Terminate(ctx)
+			require.NoError(t, err)
+		})
+
+		connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+		require.NoError(t, err)
+		fmt.Println(connStr)
+
+		db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
+		require.NoError(t, err)
+		defer db.Close()
+
+		connx, err := db.Connx(ctx)
+		require.NoError(t, err)
+		defer connx.Close()
+
+		_, err = connx.ExecContext(ctx, "create table public.metrics (device_id int, label text, value float8)")
+		require.NoError(t, err)
+
+		// To force a failure, the best way is to use a bad CSV file. In real life scenario this will provably be caused by
+		// temporal database connection errors.
+		// The goal is to test that failed transactions are retried.
+		// Create a temporary CSV file
+		badFile, err := os.CreateTemp("", "example")
+		require.NoError(t, err)
+		defer os.Remove(badFile.Name())
+		{
+			// Write data to the CSV file
+			writer := csv.NewWriter(badFile)
+
+			data := [][]string{
+				// Batch 1
+				{"42", "xasev", "4.2"},
+				{"24", "qased", "2.4"},
+				// Batch 2
+				{"24", "qased", "2.4"},
+				{"24", "qased", "forced-failure"},
+				// Batch 3
+				{"24", "qased", "2.4"},
+				{"24", "qased", "2.4"},
+			}
+
+			for _, record := range data {
+				if err := writer.Write(record); err != nil {
+					t.Fatalf("Error writing record to CSV: %v", err)
+				}
+			}
+
+			writer.Flush()
+		}
+
+		// Create a temporary CSV file
+		goodFile, err := os.CreateTemp("", "example")
+		require.NoError(t, err)
+		defer os.Remove(goodFile.Name())
+		{
+			// Write data to the CSV file
+			writer := csv.NewWriter(goodFile)
+
+			data := [][]string{
+				// Batch 1
+				{"42", "xasev", "4.2"},
+				{"24", "qased", "2.4"},
+				// Batch 2
+				{"24", "qased", "2.4"},
+				{"24", "qased", "2.4"},
+				// Batch 3
+				{"24", "qased", "2.4"},
+				{"24", "qased", "2.4"},
+			}
+
+			for _, record := range data {
+				if err := writer.Write(record); err != nil {
+					t.Fatalf("Error writing record to CSV: %v", err)
+				}
+			}
+
+			writer.Flush()
+		}
+
+		copier, err := NewCopier(connStr, "metrics",
+			WithColumns("device_id,label,value"),
+			WithBatchSize(2),
+			WithBatchErrorHandler(BatchHandlerNoop()),
+			WithImportID("test-file-id"),
+		)
+		require.NoError(t, err)
+		reader, err := os.Open(badFile.Name())
+		require.NoError(t, err)
+
+		result, err := copier.Copy(context.Background(), reader)
+		require.NoError(t, err)
+		// ensure only 4 rows are inserted
+		assert.EqualValues(t, 4, result.InsertedRows)
+		assert.EqualValues(t, 6, result.TotalRows)
+		assert.EqualValues(t, 0, int(result.SkippedRows))
+
+		batch1, row, err := LoadTransaction(ctx, connx, "test-file-id")
+		require.NoError(t, err)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
+
+		batch2, row, err := batch1.Next(ctx, connx)
+		require.NoError(t, err)
+		assert.Equal(t, transactionRowStateFailed, row.State)
+
+		_, row, err = batch2.Next(ctx, connx)
+		require.NoError(t, err)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
+
+		reader, err = os.Open(goodFile.Name())
+		require.NoError(t, err)
+
+		copier, err = NewCopier(connStr, "metrics",
+			WithColumns("device_id,label,value"),
+			WithBatchSize(2),
+			WithBatchErrorHandler(BatchHandlerNoop()),
+			WithImportID("test-file-id"),
+		)
+		require.NoError(t, err)
+
+		result, err = copier.Copy(context.Background(), reader)
+		require.NoError(t, err)
+		// ensure no rows are inserted
+		assert.EqualValues(t, 2, result.InsertedRows)
+		assert.EqualValues(t, 6, result.TotalRows)
+		assert.EqualValues(t, 4, int(result.SkippedRows))
+
+		batch1, row, err = LoadTransaction(ctx, connx, "test-file-id")
+		require.NoError(t, err)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
+
+		batch2, row, err = batch1.Next(ctx, connx)
+
+		require.NoError(t, err)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
+
+		_, row, err = batch2.Next(ctx, connx)
+		require.NoError(t, err)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
+
+		var total int
+		err = connx.QueryRowxContext(ctx, "SELECT COUNT(*) FROM public.metrics").Scan(&total)
+		require.NoError(t, err)
+		assert.Equal(t, 6, total)
+	})
+
+	t.Run("will fail", func(t *testing.T) {
+		pgContainer, err := postgres.Run(ctx,
+			"postgres:15.3-alpine",
+			postgres.WithDatabase("test-db"),
+			postgres.WithUsername("postgres"),
+			postgres.WithPassword("postgres"),
+			testcontainers.WithWaitStrategy(
+				wait.ForLog("database system is ready to accept connections").
+					WithOccurrence(2).WithStartupTimeout(5*time.Second)),
+		)
+		require.NoError(t, err)
+
+		t.Cleanup(func() {
+			err := pgContainer.Terminate(ctx)
+			require.NoError(t, err)
+		})
+
+		connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+		require.NoError(t, err)
+		fmt.Println(connStr)
+
+		db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
+		require.NoError(t, err)
+		defer db.Close()
+
+		connx, err := db.Connx(ctx)
+		require.NoError(t, err)
+		defer connx.Close()
+
+		_, err = connx.ExecContext(ctx, "create table public.metrics (device_id int, label text, value float8)")
+		require.NoError(t, err)
+
+		// Create a temporary CSV file
+		badFile, err := os.CreateTemp("", "example")
+		require.NoError(t, err)
+		defer os.Remove(badFile.Name())
+		{
+			// Write data to the CSV file
+			writer := csv.NewWriter(badFile)
+
+			data := [][]string{
+				// Batch 1
+				{"42", "xasev", "4.2"},
+				{"24", "qased", "2.4"},
+				// Batch 2
+				{"24", "qased", "2.4"},
+				{"24", "qased", "forced-failure"},
+				// Batch 3
+				{"24", "qased", "2.4"},
+				{"24", "qased", "2.4"},
+			}
+
+			for _, record := range data {
+				if err := writer.Write(record); err != nil {
+					t.Fatalf("Error writing record to CSV: %v", err)
+				}
+			}
+
+			writer.Flush()
+		}
+
+		// Create a temporary CSV file
+		retryFile, err := os.CreateTemp("", "example")
+		require.NoError(t, err)
+		defer os.Remove(retryFile.Name())
+		{
+			// Write data to the CSV file
+			writer := csv.NewWriter(retryFile)
+
+			data := [][]string{
+				// Batch 1
+				{"42", "xasev", "4.2"},
+				{"24", "qased", "2.4"},
+				// Batch 2
+				{"24", "qased", "2.4"},
+				{"24", "qased", "still fails"},
+				// Batch 3
+				{"24", "qased", "2.4"},
+				{"24", "qased", "2.4"},
+			}
+
+			for _, record := range data {
+				if err := writer.Write(record); err != nil {
+					t.Fatalf("Error writing record to CSV: %v", err)
+				}
+			}
+
+			writer.Flush()
+		}
+
+		copier, err := NewCopier(connStr, "metrics",
+			WithColumns("device_id,label,value"),
+			WithBatchSize(2),
+			WithBatchErrorHandler(BatchHandlerNoop()),
+			WithImportID("test-file-id"),
+		)
+		require.NoError(t, err)
+		reader, err := os.Open(badFile.Name())
+		require.NoError(t, err)
+
+		result, err := copier.Copy(context.Background(), reader)
+		require.NoError(t, err)
+		// ensure only 4 rows are inserted
+		assert.EqualValues(t, 4, result.InsertedRows)
+		assert.EqualValues(t, 6, result.TotalRows)
+		assert.EqualValues(t, 0, int(result.SkippedRows))
+
+		batch1, row, err := LoadTransaction(ctx, connx, "test-file-id")
+		require.NoError(t, err)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
+
+		batch2, row, err := batch1.Next(ctx, connx)
+		require.NoError(t, err)
+		assert.Equal(t, transactionRowStateFailed, row.State)
+		assert.Contains(t, *row.FailureReason, "forced-failure")
+
+		_, row, err = batch2.Next(ctx, connx)
+		require.NoError(t, err)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
+
+		reader, err = os.Open(retryFile.Name())
+		require.NoError(t, err)
+
+		copier, err = NewCopier(connStr, "metrics",
+			WithColumns("device_id,label,value"),
+			WithBatchSize(2),
+			WithBatchErrorHandler(BatchHandlerNoop()),
+			WithImportID("test-file-id"),
+		)
+		require.NoError(t, err)
+
+		result, err = copier.Copy(context.Background(), reader)
+		require.NoError(t, err)
+		// ensure no rows are inserted
+		assert.EqualValues(t, 0, result.InsertedRows)
+		assert.EqualValues(t, 6, result.TotalRows)
+		assert.EqualValues(t, 4, int(result.SkippedRows))
+
+		batch1, row, err = LoadTransaction(ctx, connx, "test-file-id")
+		require.NoError(t, err)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
+
+		batch2, row, err = batch1.Next(ctx, connx)
+
+		require.NoError(t, err)
+		assert.Equal(t, transactionRowStateFailed, row.State)
+		assert.Contains(t, *row.FailureReason, "still fails")
+
+		_, row, err = batch2.Next(ctx, connx)
+		require.NoError(t, err)
+		assert.Equal(t, transactionRowStateCompleted, row.State)
+
+		var total int
+		err = connx.QueryRowxContext(ctx, "SELECT COUNT(*) FROM public.metrics").Scan(&total)
+		require.NoError(t, err)
+		assert.Equal(t, 4, total)
+	})
+}
