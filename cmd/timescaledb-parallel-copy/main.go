@@ -17,7 +17,7 @@ import (
 
 const (
 	binName    = "timescaledb-parallel-copy"
-	version    = "v0.9.0"
+	version    = "v0.10.0"
 	tabCharStr = "\\t"
 )
 
@@ -33,16 +33,18 @@ var (
 	quoteCharacter  string
 	escapeCharacter string
 
-	fromFile            string
-	columns             string
-	skipHeader          bool
-	headerLinesCnt      int
-	batchErrorOutputDir string
-	skipBatchErrors     bool
+	fromFile        string
+	columns         string
+	skipHeader      bool
+	headerLinesCnt  int
+	skipBatchErrors bool
 
+	importID        string
 	workers         int
 	limit           int64
 	batchSize       int
+	bufferSize      int
+	batchByteSize   int
 	logBatches      bool
 	reportingPeriod time.Duration
 	verbose         bool
@@ -69,10 +71,12 @@ func init() {
 	flag.BoolVar(&skipHeader, "skip-header", false, "Skip the first line of the input")
 	flag.IntVar(&headerLinesCnt, "header-line-count", 1, "Number of header lines")
 
-	flag.StringVar(&batchErrorOutputDir, "batch-error-output-dir", "", "directory to store batch errors. Settings this will save a .csv file with the contents of the batch that failed and continue with the rest of the data.")
 	flag.BoolVar(&skipBatchErrors, "skip-batch-errors", false, "if true, the copy will continue even if a batch fails")
 
-	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert")
+	flag.StringVar(&importID, "import-id", "", "ImportID to guarantee idempotency")
+	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert. It will be limited by batch-byte-size")
+	flag.IntVar(&bufferSize, "buffer-byte-size", 2*1024*1024, "Number of bytes to buffer, it has to be big enough to hold a full row")
+	flag.IntVar(&batchByteSize, "batch-byte-size", 20*1024*1024, "Max number of bytes to send in a batch")
 	flag.Int64Var(&limit, "limit", 0, "Number of rows to insert overall; 0 means to insert all")
 	flag.IntVar(&workers, "workers", 1, "Number of parallel requests to make")
 	flag.BoolVar(&logBatches, "log-batches", false, "Whether to time individual batches.")
@@ -111,19 +115,21 @@ func main() {
 		csvcopy.WithColumns(columns),
 		csvcopy.WithWorkers(workers),
 		csvcopy.WithLimit(limit),
+		csvcopy.WithBufferSize(bufferSize),
+		csvcopy.WithBatchByteSize(batchByteSize),
 		csvcopy.WithBatchSize(batchSize),
 		csvcopy.WithLogBatches(logBatches),
 		csvcopy.WithReportingPeriod(reportingPeriod),
 		csvcopy.WithVerbose(verbose),
 	}
 
+	if importID != "" {
+		opts = append(opts, csvcopy.WithImportID(importID))
+	}
+
 	batchErrorHandler := csvcopy.BatchHandlerError()
 	if skipBatchErrors {
 		batchErrorHandler = csvcopy.BatchHandlerNoop()
-	}
-	if batchErrorOutputDir != "" {
-		log.Printf("batch errors will be stored at %s", batchErrorOutputDir)
-		batchErrorHandler = csvcopy.BatchHandlerSaveToFile(batchErrorOutputDir, batchErrorHandler)
 	}
 	if verbose || skipBatchErrors {
 		batchErrorHandler = csvcopy.BatchHandlerLog(logger, batchErrorHandler)
@@ -173,7 +179,7 @@ func main() {
 		log.Fatal("failed to copy CSV: ", err)
 	}
 
-	res := fmt.Sprintf("COPY %d", result.RowsRead)
+	res := fmt.Sprintf("COPY %d", result.InsertedRows)
 	if verbose {
 		res += fmt.Sprintf(
 			", took %v with %d worker(s) (mean rate %f/sec)",
