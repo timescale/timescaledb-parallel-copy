@@ -33,12 +33,11 @@ var (
 	quoteCharacter  string
 	escapeCharacter string
 
-	fromFile            string
-	columns             string
-	skipHeader          bool
-	headerLinesCnt      int
-	batchErrorOutputDir string
-	skipBatchErrors     bool
+	fromFile        string
+	columns         string
+	skipHeader      bool
+	headerLinesCnt  int
+	skipBatchErrors bool
 
 	importID        string
 	workers         int
@@ -72,7 +71,6 @@ func init() {
 	flag.BoolVar(&skipHeader, "skip-header", false, "Skip the first line of the input")
 	flag.IntVar(&headerLinesCnt, "header-line-count", 1, "Number of header lines")
 
-	flag.StringVar(&batchErrorOutputDir, "batch-error-output-dir", "", "directory to store batch errors. Settings this will save a .csv file with the contents of the batch that failed and continue with the rest of the data.")
 	flag.BoolVar(&skipBatchErrors, "skip-batch-errors", false, "if true, the copy will continue even if a batch fails")
 
 	flag.StringVar(&importID, "import-id", "", "ImportID to guarantee idempotency")
@@ -132,10 +130,6 @@ func main() {
 	batchErrorHandler := csvcopy.BatchHandlerError()
 	if skipBatchErrors {
 		batchErrorHandler = csvcopy.BatchHandlerNoop()
-	}
-	if batchErrorOutputDir != "" {
-		log.Printf("batch errors will be stored at %s", batchErrorOutputDir)
-		batchErrorHandler = csvcopy.BatchHandlerSaveToFile(batchErrorOutputDir, batchErrorHandler)
 	}
 	if verbose || skipBatchErrors {
 		batchErrorHandler = csvcopy.BatchHandlerLog(logger, batchErrorHandler)

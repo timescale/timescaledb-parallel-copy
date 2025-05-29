@@ -371,7 +371,6 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 	var failHandlerError *BatchError
 	// If failHandler is defined, attempt to handle the error
 	if c.failHandler != nil {
-		batch.Rewind()
 		failHandlerError = c.failHandler(batch, errAt)
 		if failHandlerError == nil {
 			// If fail handler error does not return an error,

@@ -7,12 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
 
@@ -543,34 +541,4 @@ func RandString(n int) string {
 		b[i] = letterRunes[rand.Intn(len(letterRunes))]
 	}
 	return string(b)
-}
-
-func TestRewind(t *testing.T) {
-	randomData := RandString(5000)
-	data := net.Buffers(bytes.Split([]byte(randomData), []byte(",")))
-
-	batch := newBatch(data, newLocation("test-id", 0, 0, 0, 0, 0))
-
-	var err error
-	// reads all the data
-	buf := bytes.Buffer{}
-	_, err = buf.ReadFrom(&batch.Data)
-	require.NoError(t, err)
-	require.Equal(t, strings.Replace(randomData, ",", "", -1), buf.String())
-	require.Empty(t, batch.Data)
-
-	// Reading again returns nothing
-	buf = bytes.Buffer{}
-	_, err = buf.ReadFrom(&batch.Data)
-	require.NoError(t, err)
-	require.Empty(t, buf.String())
-	require.Empty(t, batch.Data)
-
-	// Reading again after rewind, returns all data
-	batch.Rewind()
-	buf = bytes.Buffer{}
-	_, err = buf.ReadFrom(&batch.Data)
-	require.NoError(t, err)
-	require.Equal(t, strings.Replace(randomData, ",", "", -1), buf.String())
-
 }

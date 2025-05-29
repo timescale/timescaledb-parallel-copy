@@ -30,11 +30,6 @@ type scanOptions struct {
 type Batch struct {
 	Data     net.Buffers
 	Location Location
-
-	// backup holds the same data as Data. It is used to rewind if something goes wrong
-	// Because it copies the slice, the memory is not duplicated
-	// Because we only read data, the underlaying memory is not modified either
-	backup net.Buffers
 }
 
 func newBatch(data net.Buffers, location Location) Batch {
@@ -42,7 +37,6 @@ func newBatch(data net.Buffers, location Location) Batch {
 		Data:     data,
 		Location: location,
 	}
-	b.snapshot()
 	return b
 }
 
@@ -66,17 +60,6 @@ func newBatchFromReader(r io.Reader) Batch {
 	}
 
 	return b
-}
-
-func (b *Batch) snapshot() {
-	b.backup = net.Buffers{}
-	b.backup = append(b.backup, b.Data...)
-}
-
-// Makes data available again to read
-func (b *Batch) Rewind() {
-	b.Data = net.Buffers{}
-	b.Data = append(b.Data, b.backup...)
 }
 
 // Location positions a batch within the original data
