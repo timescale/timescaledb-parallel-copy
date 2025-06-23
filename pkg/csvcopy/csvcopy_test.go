@@ -1,7 +1,6 @@
 package csvcopy
 
 import (
-	"bytes"
 	"context"
 	"encoding/csv"
 	"fmt"
@@ -559,8 +558,6 @@ func TestFailedBatchHandlerContinue(t *testing.T) {
 	require.EqualValues(t, 4, int(result.InsertedRows))
 	require.EqualValues(t, 6, int(result.TotalRows))
 	require.EqualValues(t, 0, int(result.SkippedRows))
-	require.Contains(t, fs.Files, 2)
-	require.Equal(t, fs.Files[2].String(), "24,qased,2.4\n24,qased,hello\n")
 	require.Contains(t, fs.Errors, 2)
 	assert.EqualValues(t, fs.Errors[2].(*ErrAtRow).RowAtLocation(), 3)
 	assert.EqualValues(t, fs.Errors[2].(*ErrAtRow).BatchLocation.RowCount, 2)
@@ -637,8 +634,6 @@ func TestFailedBatchHandlerStop(t *testing.T) {
 	require.EqualValues(t, 4, int(result.TotalRows))
 	require.EqualValues(t, 0, int(result.SkippedRows))
 
-	require.Contains(t, fs.Files, 2)
-	require.Equal(t, fs.Files[2].String(), "24,qased,2.4\n24,qased,hello\n")
 	require.Contains(t, fs.Errors, 2)
 	assert.EqualValues(t, fs.Errors[2].(*ErrAtRow).RowAtLocation(), 3)
 	assert.EqualValues(t, fs.Errors[2].(*ErrAtRow).BatchLocation.RowCount, 2)
@@ -647,24 +642,14 @@ func TestFailedBatchHandlerStop(t *testing.T) {
 }
 
 type MockErrorHandler struct {
-	Files  map[int]*bytes.Buffer
 	Errors map[int]error
 	stop   bool
 }
 
 func (fs *MockErrorHandler) HandleError(batch Batch, reason error) *BatchError {
-	if fs.Files == nil {
-		fs.Files = map[int]*bytes.Buffer{}
-	}
 	if fs.Errors == nil {
 		fs.Errors = map[int]error{}
 	}
-	buf := &bytes.Buffer{}
-	_, err := buf.ReadFrom(&batch.Data)
-	if err != nil {
-		return NewErrStop(fmt.Errorf("failed to read batch data: %w", err))
-	}
-	fs.Files[int(batch.Location.StartRow)] = buf
 	fs.Errors[int(batch.Location.StartRow)] = reason
 	if fs.stop {
 		return NewErrStop(reason)

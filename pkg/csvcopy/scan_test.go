@@ -342,7 +342,7 @@ d"
 				i := 0
 				for buf := range rowChan {
 					assert.EqualValues(t, c.expectedRowCount[i], buf.Location.RowCount, "on batch %d", i)
-					actual = append(actual, string(bytes.Join(buf.Data, nil)))
+					actual = append(actual, string(bytes.Join(buf.data, nil)))
 					i++
 				}
 

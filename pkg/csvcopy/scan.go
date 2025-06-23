@@ -28,13 +28,13 @@ type scanOptions struct {
 
 // Batch represents an operation to copy data into the DB
 type Batch struct {
-	Data     net.Buffers
+	data     net.Buffers
 	Location Location
 }
 
 func newBatch(data net.Buffers, location Location) Batch {
 	b := Batch{
-		Data:     data,
+		data:     data,
 		Location: location,
 	}
 	return b
@@ -56,7 +56,7 @@ func newBatchFromReader(r io.Reader) Batch {
 
 		b.Location.ByteLen += n
 		// Process the data read from the buffer
-		b.Data = append(b.Data, buf[:n])
+		b.data = append(b.data, buf[:n])
 	}
 
 	return b
