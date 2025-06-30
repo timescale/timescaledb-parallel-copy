@@ -100,51 +100,22 @@ func (l Location) HasImportID() bool {
 	return l.ImportID != ""
 }
 
-// scan reads all lines from an io.Reader, partitions them into net.Buffers with
-// opts.Size rows each, and writes each batch to the out channel. If opts.Skip
-// is greater than zero, that number of lines will be discarded from the
-// beginning of the data. If opts.Limit is greater than zero, then scan will
-// stop once it has written that number of rows, across all batches, to the
-// channel.
+// scan reads all lines from a pre-configured buffered reader, partitions them into net.Buffers with
+// opts.Size rows each, and writes each batch to the out channel. If opts.Limit is greater than zero,
+// then scan will stop once it has written that number of rows, across all batches, to the channel.
 //
 // scan expects the input to be in Postgres CSV format. Since this format allows
 // rows to be split over multiple lines, the caller may provide opts.Quote and
 // opts.Escape as the QUOTE and ESCAPE characters used for the CSV input.
-func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) error {
+//
+// The caller is responsible for setting up the CountReader and buffered reader,
+// and for skipping any headers before calling this function.
+func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out chan<- Batch, opts scanOptions) error {
 	var rowsRead int64
-	counter := &CountReader{Reader: r}
-
-	bufferSize := 2 * 1024 * 1024 // 2 MB buffer
-	if opts.BufferByteSize > 0 {
-		bufferSize = opts.BufferByteSize
-	}
 
 	batchSize := 20 * 1024 * 1024 // 20 MB batch size
 	if opts.BatchByteSize > 0 {
 		batchSize = opts.BatchByteSize
-	}
-
-	if batchSize < bufferSize {
-		return fmt.Errorf("batch size (%d) is smaller than buffer size (%d)", batchSize, bufferSize)
-	}
-
-	reader := bufio.NewReaderSize(counter, bufferSize)
-
-	for skip := opts.Skip; skip > 0; {
-		// The use of ReadLine() here avoids copying or buffering data that
-		// we're just going to discard.
-		_, isPrefix, err := reader.ReadLine()
-
-		if err == io.EOF {
-			// No data?
-			return nil
-		} else if err != nil {
-			return fmt.Errorf("skipping header: %w", err)
-		}
-		if !isPrefix {
-			// We pulled a full row from the buffer.
-			skip--
-		}
 	}
 
 	quote := byte('"')
@@ -178,7 +149,7 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 		select {
 		case out <- newBatch(
 			bufs,
-			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
+			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart), // Skip is 0 since we already skipped
 		):
 		case <-ctx.Done():
 			return ctx.Err()
@@ -267,7 +238,7 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 		select {
 		case out <- newBatch(
 			bufs,
-			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
+			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart), // Skip is 0 since we already skipped
 		):
 		case <-ctx.Done():
 			return ctx.Err()
@@ -379,4 +350,25 @@ func (c *CountReader) Read(b []byte) (int, error) {
 	n, err := c.Reader.Read(b)
 	c.Total += n
 	return n, err
+}
+
+// skipHeaders skips the specified number of header lines without parsing them
+func skipHeaders(reader *bufio.Reader, skip int) error {
+	for skip > 0 {
+		// The use of ReadLine() here avoids copying or buffering data that
+		// we're just going to discard.
+		_, isPrefix, err := reader.ReadLine()
+
+		if err == io.EOF {
+			// No data?
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("skipping header: %w", err)
+		}
+		if !isPrefix {
+			// We pulled a full row from the buffer.
+			skip--
+		}
+	}
+	return nil
 }

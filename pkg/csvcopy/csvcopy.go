@@ -1,6 +1,7 @@
 package csvcopy
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -142,6 +143,23 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		}
 	}
 
+	// Setup reader with buffering for header skipping
+	bufferSize := 2 * 1024 * 1024 // 2 MB buffer
+	if c.bufferSize > 0 {
+		bufferSize = c.bufferSize
+	}
+	
+	counter := &CountReader{Reader: reader}
+	bufferedReader := bufio.NewReaderSize(counter, bufferSize)
+	
+	// Skip headers if needed
+	if c.skip > 0 {
+		err := skipHeaders(bufferedReader, c.skip)
+		if err != nil {
+			return Result{}, fmt.Errorf("failed to skip headers: %w", err)
+		}
+	}
+
 	var workerWg sync.WaitGroup
 	batchChan := make(chan Batch, c.workers*2)
 
@@ -199,7 +217,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		if err := scan(ctx, reader, batchChan, opts); err != nil {
+		if err := scan(ctx, counter, bufferedReader, batchChan, opts); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
 			cancel()
 		}

@@ -361,7 +361,23 @@ d"
 				BatchByteSize:  c.batchSize,
 			}
 
-			err := scan(context.Background(), reader, rowChan, opts)
+			counter := &CountReader{Reader: reader}
+			bufferSize := 2 * 1024 * 1024
+			if c.bufferSize > 0 {
+				bufferSize = c.bufferSize
+			}
+			bufferedReader := bufio.NewReaderSize(counter, bufferSize)
+			
+			// Skip headers if needed
+			if opts.Skip > 0 {
+				err := skipHeaders(bufferedReader, opts.Skip)
+				if err != nil {
+					assert.NoError(t, err)
+					return
+				}
+			}
+			
+			err := scan(context.Background(), counter, bufferedReader, rowChan, opts)
 			if err != nil {
 				if c.expectedError == "" {
 					assert.NoError(t, err)
@@ -411,7 +427,19 @@ d"
 				Skip: c.skip,
 			}
 
-			err := scan(context.Background(), reader, rowChan, opts)
+			counter := &CountReader{Reader: reader}
+			bufferedReader := bufio.NewReaderSize(counter, 2*1024*1024)
+			
+			// Skip headers if needed
+			if opts.Skip > 0 {
+				err := skipHeaders(bufferedReader, opts.Skip)
+				if err != nil {
+					t.Errorf("Failed to skip headers: %v", err)
+					return
+				}
+			}
+			
+			err := scan(context.Background(), counter, bufferedReader, rowChan, opts)
 			if !errors.Is(err, expected) {
 				t.Errorf("Scan() returned unexpected error: %v", err)
 				t.Logf("want: %v", expected)
@@ -520,7 +548,19 @@ func BenchmarkScan(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					reader.Reset(data) // rewind to the beginning
 
-					err := scan(context.Background(), reader, rowChan, opts)
+					counter := &CountReader{Reader: reader}
+					bufferedReader := bufio.NewReaderSize(counter, 2*1024*1024)
+					
+					// Skip headers if needed
+					if opts.Skip > 0 {
+						err := skipHeaders(bufferedReader, opts.Skip)
+						if err != nil {
+							b.Errorf("Failed to skip headers: %v", err)
+							return
+						}
+					}
+
+					err := scan(context.Background(), counter, bufferedReader, rowChan, opts)
 					if err != nil {
 						b.Errorf("Scan() returned unexpected error: %v", err)
 					}
