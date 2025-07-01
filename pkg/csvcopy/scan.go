@@ -148,7 +148,7 @@ func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out c
 		select {
 		case out <- newBatch(
 			bufs,
-			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart), // Skip is 0 since we already skipped
+			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 		):
 		case <-ctx.Done():
 			return ctx.Err()
@@ -237,7 +237,7 @@ func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out c
 		select {
 		case out <- newBatch(
 			bufs,
-			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart), // Skip is 0 since we already skipped
+			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 		):
 		case <-ctx.Done():
 			return ctx.Err()
