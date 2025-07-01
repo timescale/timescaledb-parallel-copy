@@ -351,8 +351,8 @@ func (c *CountReader) Read(b []byte) (int, error) {
 	return n, err
 }
 
-// skipHeaders skips the specified number of header lines without parsing them
-func skipHeaders(reader *bufio.Reader, skip int) error {
+// skipLines skips the specified number of lines starting from the very beginning of the file.
+func skipLines(reader *bufio.Reader, skip int) error {
 	for skip > 0 {
 		// The use of ReadLine() here avoids copying or buffering data that
 		// we're just going to discard.
@@ -362,7 +362,7 @@ func skipHeaders(reader *bufio.Reader, skip int) error {
 			// No data?
 			return nil
 		} else if err != nil {
-			return fmt.Errorf("skipping header: %w", err)
+			return fmt.Errorf("skipping line: %w", err)
 		}
 		if !isPrefix {
 			// We pulled a full row from the buffer.

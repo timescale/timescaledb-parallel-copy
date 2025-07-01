@@ -346,6 +346,25 @@ d"
 				2,
 			},
 		},
+		{
+			name: "skip first lines, then parse headers",
+			input: []string{
+				`# This is a comment`,
+				`# This is another comment`,
+				`# And the following line contain the actual headers`,
+				`a,b,c`,
+				`1,2,3`,
+				`4,5,6`,
+			},
+			size: 3,
+			skip: 3, // skip the comments, not the header line
+			expected: []string{
+				"a,b,c\n1,2,3\n4,5,6",
+			},
+			expectedRowCount: []int{
+				3,
+			},
+		},
 	}
 
 	for _, c := range cases {
@@ -386,7 +405,7 @@ d"
 
 			// Skip headers if needed
 			if opts.Skip > 0 {
-				err := skipHeaders(bufferedReader, opts.Skip)
+				err := skipLines(bufferedReader, opts.Skip)
 				if err != nil {
 					assert.NoError(t, err)
 					return
@@ -448,7 +467,7 @@ d"
 
 			// Skip headers if needed
 			if opts.Skip > 0 {
-				err := skipHeaders(bufferedReader, opts.Skip)
+				err := skipLines(bufferedReader, opts.Skip)
 				if !errors.Is(err, expected) {
 					t.Errorf("Scan() returned unexpected error: %v", err)
 					t.Logf("want: %v", expected)
@@ -569,7 +588,7 @@ func BenchmarkScan(b *testing.B) {
 
 					// Skip headers if needed
 					if opts.Skip > 0 {
-						err := skipHeaders(bufferedReader, opts.Skip)
+						err := skipLines(bufferedReader, opts.Skip)
 						if err != nil {
 							b.Errorf("Failed to skip headers: %v", err)
 							return

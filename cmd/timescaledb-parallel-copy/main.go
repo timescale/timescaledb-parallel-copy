@@ -35,13 +35,13 @@ var (
 	quoteCharacter  string
 	escapeCharacter string
 
-	fromFile        string
-	columns         string
-	columnMapping   string
+	fromFile          string
+	columns           string
+	columnMapping     string
 	autoColumnMapping bool
-	skipHeader      bool
-	headerLinesCnt  int
-	skipBatchErrors bool
+	skipHeader        bool
+	headerLinesCnt    int
+	skipBatchErrors   bool
 
 	importID        string
 	workers         int
@@ -74,6 +74,9 @@ func init() {
 	flag.StringVar(&columns, "columns", "", "Comma-separated columns present in CSV")
 	flag.StringVar(&columnMapping, "column-mapping", "", "Column mapping from CSV to database columns (format: \"csv_col1:db_col1,csv_col2:db_col2\" or JSON)")
 	flag.BoolVar(&autoColumnMapping, "auto-column-mapping", false, "Automatically map CSV headers to database columns with the same names")
+
+	// TODO The point is that we talk about "header" line(s) in the context of CSV files, but we are just skipping the first line(s) of the input.
+	// So this flag should be renamed to something like "skip-first-line(s)".
 	flag.BoolVar(&skipHeader, "skip-header", false, "Skip the first line of the input")
 	flag.IntVar(&headerLinesCnt, "header-line-count", 1, "Number of header lines")
 

@@ -134,7 +134,6 @@ func (c *Copier) Truncate() (err error) {
 }
 
 func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
-
 	if c.HasImportID() {
 		if err := ensureTransactionTable(ctx, c.connString); err != nil {
 			return Result{}, fmt.Errorf("failed to ensure transaction table, %w", err)
@@ -154,20 +153,15 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	counter := &CountReader{Reader: reader}
 	bufferedReader := bufio.NewReaderSize(counter, bufferSize)
 
-	switch {
-	case c.useColumnMapping:
-		if c.skip != 1 {
-			return Result{}, fmt.Errorf("column mapping requires skip to be exactly 1 (one header row)")
+	if c.skip > 0 {
+		if err := skipLines(bufferedReader, c.skip); err != nil {
+			return Result{}, fmt.Errorf("failed to skip lines: %w", err)
 		}
-		err := c.calculateColumnsFromHeaders(bufferedReader)
-		if err != nil {
+	}
+
+	if c.useColumnMapping {
+		if err := c.calculateColumnsFromHeaders(bufferedReader); err != nil {
 			return Result{}, fmt.Errorf("failed to calculate columns from headers: %w", err)
-		}
-	case c.skip > 0:
-		// Just skip headers
-		err := skipHeaders(bufferedReader, c.skip)
-		if err != nil {
-			return Result{}, fmt.Errorf("failed to skip headers: %w", err)
 		}
 	}
 
