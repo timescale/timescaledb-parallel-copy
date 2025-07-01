@@ -373,11 +373,7 @@ func skipHeaders(reader *bufio.Reader, skip int) error {
 }
 
 // parseHeaders parses the first header line and skips remaining header lines
-func parseHeaders(reader *bufio.Reader, skip int, quote, escape byte, comma rune) ([]string, error) {
-	if skip == 0 {
-		return []string{}, nil
-	}
-
+func parseHeaders(reader *bufio.Reader, quote, escape byte, comma rune) ([]string, error) {
 	// Read the first header line
 	var headerLine []byte
 	for {

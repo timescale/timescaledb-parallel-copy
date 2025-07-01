@@ -287,7 +287,7 @@ func (c *Copier) calculateColumnsFromHeaders(bufferedReader *bufio.Reader) error
 		comma = rune(c.splitCharacter[0])
 	}
 
-	headers, err := parseHeaders(bufferedReader, c.skip, quote, escape, comma)
+	headers, err := parseHeaders(bufferedReader, quote, escape, comma)
 	if err != nil {
 		return fmt.Errorf("failed to parse headers: %w", err)
 	}
