@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/timescale/timescaledb-parallel-copy/pkg/batch"
 )
 
 type Option func(c *Copier) error
@@ -156,6 +154,28 @@ func WithLimit(limit int64) Option {
 	}
 }
 
+// WithBufferSize sets the buffer size
+func WithBufferSize(bufferSize int) Option {
+	return func(c *Copier) error {
+		if bufferSize < 16 { // minimum buffer size on bufio.NewReaderSize
+			return errors.New("buffer size must be greater than minimum buffer size (16)")
+		}
+		c.bufferSize = bufferSize
+		return nil
+	}
+}
+
+// WithBatchByteSize sets the max number of bytes to send in a batch
+func WithBatchByteSize(batchByteSize int) Option {
+	return func(c *Copier) error {
+		if batchByteSize < 16 { // minimum buffer size on bufio.NewReaderSize
+			return errors.New("batch byte size must be greater than minimum buffer size (16)")
+		}
+		c.batchByteSize = batchByteSize
+		return nil
+	}
+}
+
 // WithBatchSize sets the rows processed on each batch
 func WithBatchSize(batchSize int) Option {
 	return func(c *Copier) error {
@@ -191,16 +211,85 @@ func WithSchemaName(schema string) Option {
 	}
 }
 
+func NewErrContinue(err error) *BatchError {
+	return &BatchError{
+		Continue: true,
+		Err:      err,
+	}
+}
+
+func NewErrStop(err error) *BatchError {
+	return &BatchError{
+		Continue: false,
+		Err:      err,
+	}
+}
+
+type BatchError struct {
+	Continue bool
+	Err      error
+}
+
+func (err BatchError) Error() string {
+	return fmt.Sprintf("continue: %t, %s", err.Continue, err.Err)
+}
+
+func (err BatchError) Unwrap() error {
+	return err.Err
+}
+
 // BatchErrorHandler is how batch errors are handled
 // It has the batch data so it can be inspected
 // The error has the failure reason
 // If the error is not handled properly, returning an error will stop the workers
-type BatchErrorHandler func(batch batch.Batch, err error) error
+// If ErrContinue is returned, the batch will be marked as failed but continue processing
+// if ErrStop is returned, the processing will stop
+type BatchErrorHandler func(batch Batch, err error) *BatchError
 
 // WithBatchErrorHandler specifies which fail handler implementation to use
 func WithBatchErrorHandler(handler BatchErrorHandler) Option {
 	return func(c *Copier) error {
 		c.failHandler = handler
+		return nil
+	}
+}
+
+// WithImportID specifies the ID for the import operation to guarantee idempotency
+// The tool will keep track of every batch to insert in the database and update the
+// status according to the result of the operation.
+// This information can be used to recover in case of an abrupt stop or just to resume
+// the operation after a graceful stop before the entire file was processed
+//
+// Usage: For every unique file that has to be inserted in the database, generate an
+// unique identifier. As long as configuration remains the same,
+// It is safe to run the same command multiple times.
+// It is safe to run concurrently for the same ID.
+//
+// Note: Using the same import id has the following expectation
+// - The input file will be the same
+// - The batch size will be the same
+//
+// If those expectation are not met, the behaviour of the tool is not specified and
+// will provably end up inserting duplicate records.
+func WithImportID(id string) Option {
+	return func(c *Copier) error {
+		if id == "" {
+			return errors.New("importID can't be empty")
+		}
+		c.importID = id
+		return nil
+	}
+}
+
+// WithIdempotencyWindow sets the idempotency window for the import operation
+// Records older than the window will be deleted from the transaction table
+// Default is 4 weeks
+func WithIdempotencyWindow(window time.Duration) Option {
+	return func(c *Copier) error {
+		if window < 0 {
+			return errors.New("idempotency window must be greater than zero")
+		}
+		c.idempotencyWindow = window
 		return nil
 	}
 }
