@@ -57,6 +57,7 @@ type Copier struct {
 	importID          string
 	idempotencyWindow time.Duration
 	columnMapping     ColumnsMapping
+	useColumnMapping  bool
 
 	// Rows that are inserted in the database by this copier instance
 	insertedRows int64
@@ -154,7 +155,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	bufferedReader := bufio.NewReaderSize(counter, bufferSize)
 
 	switch {
-	case len(c.columnMapping) > 0:
+	case c.useColumnMapping:
 		if c.skip != 1 {
 			return Result{}, fmt.Errorf("column mapping requires skip to be exactly 1 (one header row)")
 		}
@@ -290,7 +291,7 @@ func (c *Copier) calculateColumnsFromHeaders(bufferedReader *bufio.Reader) error
 
 	if len(c.columnMapping) == 0 {
 		c.columns = strings.Join(headers, ",")
-		c.logger.Infof("No column mapping provided, using all headers: %v", headers)
+		c.logger.Infof("automatic column mapping: %s", c.columns)
 		return nil
 	}
 
@@ -303,7 +304,7 @@ func (c *Copier) calculateColumnsFromHeaders(bufferedReader *bufio.Reader) error
 		columns = append(columns, dbColumn)
 	}
 	c.columns = strings.Join(columns, ",")
-	c.logger.Infof("Using column mapping: %v", c.columns)
+	c.logger.Infof("Using column mapping: %s", c.columns)
 	return nil
 }
 

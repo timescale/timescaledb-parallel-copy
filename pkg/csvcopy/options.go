@@ -100,8 +100,8 @@ func WithEscapeCharacter(escapeCharacter string) Option {
 // WithColumns accepts a list of comma separated values for the csv columns
 func WithColumns(columns string) Option {
 	return func(c *Copier) error {
-		if len(c.columnMapping) > 0 {
-			return errors.New("column mapping is already set. Use only one of: WithColumns or WithColumnMapping")
+		if c.useColumnMapping {
+			return errors.New("column mapping is already set. Use only one of: WithColumns, WithColumnMapping, or WithAutoColumnMapping")
 		}
 		c.columns = columns
 		return nil
@@ -112,7 +112,7 @@ func WithColumns(columns string) Option {
 func WithSkipHeader(skipHeader bool) Option {
 	return func(c *Copier) error {
 		if c.skip != 0 {
-			return errors.New("skip is already set. Use only one of: WithSkipHeader, WithSkipHeaderCount, or WithColumnMapping")
+			return errors.New("skip is already set. Use only one of: WithSkipHeader, WithSkipHeaderCount, WithColumnMapping, or WithAutoColumnMapping")
 		}
 		if skipHeader {
 			c.skip = 1
@@ -125,7 +125,7 @@ func WithSkipHeader(skipHeader bool) Option {
 func WithSkipHeaderCount(headerLineCount int) Option {
 	return func(c *Copier) error {
 		if c.skip != 0 {
-			return errors.New("skip is already set. Use only one of: WithSkipHeader, WithSkipHeaderCount, or WithColumnMapping")
+			return errors.New("skip is already set. Use only one of: WithSkipHeader, WithSkipHeaderCount, WithColumnMapping, or WithAutoColumnMapping")
 		}
 		if headerLineCount <= 0 {
 			return errors.New("header line count must be greater than zero")
@@ -320,6 +320,29 @@ func WithColumnMapping(mappings []ColumnMapping) Option {
 			}
 		}
 		c.columnMapping = mappings
+		c.useColumnMapping = true
+		// Automatically set skip to 1 for header parsing
+		c.skip = 1
+		return nil
+	}
+}
+
+// WithAutoColumnMapping enables automatic column mapping where CSV header names
+// are used as database column names (1:1 mapping)
+// This option automatically enables header skipping (sets skip to 1)
+func WithAutoColumnMapping() Option {
+	return func(c *Copier) error {
+		if c.skip != 0 {
+			return errors.New("skip is already set. Auto column mapping automatically handles header skipping")
+		}
+		if c.columns != "" {
+			return errors.New("columns are already set. Use only one of: WithColumns or WithAutoColumnMapping")
+		}
+		if len(c.columnMapping) > 0 {
+			return errors.New("column mapping is already set. Use only one of: WithColumnMapping or WithAutoColumnMapping")
+		}
+		c.useColumnMapping = true
+		// Leave columnMapping empty for auto mapping
 		// Automatically set skip to 1 for header parsing
 		c.skip = 1
 		return nil
