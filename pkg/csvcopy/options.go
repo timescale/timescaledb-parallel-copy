@@ -112,7 +112,7 @@ func WithColumns(columns string) Option {
 func WithSkipHeader(skipHeader bool) Option {
 	return func(c *Copier) error {
 		if c.skip != 0 {
-			return errors.New("skip is already set. Use only one of: WithSkipHeader, WithSkipHeaderCount, WithColumnMapping, or WithAutoColumnMapping")
+			return errors.New("skip is already set. Use only one of: WithSkipHeader or WithSkipHeaderCount")
 		}
 		if skipHeader {
 			c.skip = 1
@@ -125,7 +125,7 @@ func WithSkipHeader(skipHeader bool) Option {
 func WithSkipHeaderCount(headerLineCount int) Option {
 	return func(c *Copier) error {
 		if c.skip != 0 {
-			return errors.New("skip is already set. Use only one of: WithSkipHeader, WithSkipHeaderCount, WithColumnMapping, or WithAutoColumnMapping")
+			return errors.New("skip is already set. Use only one of: WithSkipHeader or WithSkipHeaderCount")
 		}
 		if headerLineCount <= 0 {
 			return errors.New("header line count must be greater than zero")
@@ -305,11 +305,11 @@ func WithColumnMapping(mappings []ColumnMapping) Option {
 		if mappings == nil {
 			return errors.New("column mapping cannot be nil")
 		}
-		if c.skip != 0 {
-			return errors.New("skip is already set. Column mapping automatically handles header skipping")
+		if c.useColumnMapping {
+			return errors.New("column mapping is already set. Use only one of: WithColumns, WithColumnMapping, or WithAutoColumnMapping")
 		}
 		if c.columns != "" {
-			return errors.New("columns are already set. Use only one of: WithColumns or WithColumnMapping")
+			return errors.New("columns are already set. Use only one of: WithColumns, WithColumnMapping, or WithAutoColumnMapping")
 		}
 		for i, mapping := range mappings {
 			if mapping.CSVColumnName == "" {
@@ -321,8 +321,6 @@ func WithColumnMapping(mappings []ColumnMapping) Option {
 		}
 		c.columnMapping = mappings
 		c.useColumnMapping = true
-		// Automatically set skip to 1 for header parsing
-		c.skip = 1
 		return nil
 	}
 }
@@ -332,19 +330,13 @@ func WithColumnMapping(mappings []ColumnMapping) Option {
 // This option automatically enables header skipping (sets skip to 1)
 func WithAutoColumnMapping() Option {
 	return func(c *Copier) error {
-		if c.skip != 0 {
-			return errors.New("skip is already set. Auto column mapping automatically handles header skipping")
-		}
 		if c.columns != "" {
-			return errors.New("columns are already set. Use only one of: WithColumns or WithAutoColumnMapping")
+			return errors.New("columns are already set. Use only one of: WithColumns, WithColumnMapping, or WithAutoColumnMapping")
 		}
-		if len(c.columnMapping) > 0 {
-			return errors.New("column mapping is already set. Use only one of: WithColumnMapping or WithAutoColumnMapping")
+		if c.useColumnMapping {
+			return errors.New("column mapping is already set. Use only one of: WithColumns, WithColumnMapping, or WithAutoColumnMapping")
 		}
 		c.useColumnMapping = true
-		// Leave columnMapping empty for auto mapping
-		// Automatically set skip to 1 for header parsing
-		c.skip = 1
 		return nil
 	}
 }
