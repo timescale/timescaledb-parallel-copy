@@ -11,11 +11,10 @@ import (
 
 // scanOptions contains all the configurable knobs for Scan.
 type scanOptions struct {
-	Size           int   // maximum number of rows per batch, It may be less than this if ChunkByteSize is reached first
-	Skip           int   // how many header lines to skip at the beginning
-	Limit          int64 // total number of rows to scan after the header.
-	BufferByteSize int   // buffer size for the reader. it has to be big enough to hold a full row
-	BatchByteSize  int   // Max byte size for a batch.
+	Size          int   // maximum number of rows per batch, It may be less than this if ChunkByteSize is reached first
+	Skip          int   // how many header lines to skip at the beginning
+	Limit         int64 // total number of rows to scan after the header.
+	BatchByteSize int   // Max byte size for a batch.
 
 	Quote  byte // the QUOTE character; defaults to '"'
 	Escape byte // the ESCAPE character; defaults to QUOTE
@@ -169,7 +168,7 @@ func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out c
 		switch err {
 		case bufio.ErrBufferFull:
 			// If we hit buffer full, we do not have enough data to read a full row
-			return fmt.Errorf("reading lines, %w", err)
+			return fmt.Errorf("reading lines, %w. you should provably increase batch size", err)
 
 		case io.EOF:
 			// Also fine, but unlike ErrBufferFull we won't have another
@@ -371,4 +370,96 @@ func skipHeaders(reader *bufio.Reader, skip int) error {
 		}
 	}
 	return nil
+}
+
+// parseHeaders parses the first header line and skips remaining header lines
+func parseHeaders(reader *bufio.Reader, skip int, quote, escape byte, comma rune) ([]string, error) {
+	if skip == 0 {
+		return []string{}, nil
+	}
+
+	// Read the first header line
+	var headerLine []byte
+	for {
+		data, isPrefix, err := reader.ReadLine()
+		if err == io.EOF {
+			return []string{}, nil
+		} else if err != nil {
+			return nil, fmt.Errorf("reading header: %w", err)
+		}
+
+		headerLine = append(headerLine, data...)
+		if !isPrefix {
+			// We have a complete line
+			break
+		}
+	}
+
+	// Parse the CSV header line using PostgreSQL CSV format
+	// (which differs from standard CSV in escape handling)
+	headers, err := parsePostgreSQLCSVLine(string(headerLine), comma, quote, escape)
+	if err != nil {
+		return nil, fmt.Errorf("parsing header line: %w", err)
+	}
+
+	return headers, nil
+}
+
+// parsePostgreSQLCSVLine parses a CSV line using PostgreSQL CSV format rules
+// This handles quote, escape, and comma characters as PostgreSQL COPY expects
+func parsePostgreSQLCSVLine(line string, comma rune, quote, escape byte) ([]string, error) {
+	var fields []string
+	var field []byte
+	var inQuote bool
+
+	for i := 0; i < len(line); i++ {
+		b := line[i]
+
+		if inQuote {
+			if b == escape && i+1 < len(line) {
+				// Handle escape sequences - look ahead to see what's being escaped
+				next := line[i+1]
+				if next == quote || next == escape {
+					// Valid escape sequence, add the escaped character
+					field = append(field, next)
+					i++ // Skip the next character as it's been consumed
+					continue
+				}
+			}
+
+			if b == quote {
+				// End of quoted field
+				inQuote = false
+				continue
+			}
+
+			// Regular character inside quotes
+			field = append(field, b)
+		} else {
+			if b == quote {
+				// Start of quoted field
+				inQuote = true
+				continue
+			}
+
+			if rune(b) == comma {
+				// Field separator
+				fields = append(fields, string(field))
+				field = field[:0]
+				continue
+			}
+
+			// Regular character outside quotes
+			field = append(field, b)
+		}
+	}
+
+	// Add the last field
+	fields = append(fields, string(field))
+
+	if inQuote {
+		return nil, fmt.Errorf("unterminated quoted field in header line")
+	}
+
+	return fields, nil
 }

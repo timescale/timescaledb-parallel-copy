@@ -100,6 +100,9 @@ func WithEscapeCharacter(escapeCharacter string) Option {
 // WithColumns accepts a list of comma separated values for the csv columns
 func WithColumns(columns string) Option {
 	return func(c *Copier) error {
+		if len(c.columnMapping) > 0 {
+			return errors.New("column mapping is already set. Use only one of: WithColumns or WithColumnMapping")
+		}
 		c.columns = columns
 		return nil
 	}
@@ -109,7 +112,7 @@ func WithColumns(columns string) Option {
 func WithSkipHeader(skipHeader bool) Option {
 	return func(c *Copier) error {
 		if c.skip != 0 {
-			return errors.New("skip is already set. Use SkipHeader or SkipHeaderCount")
+			return errors.New("skip is already set. Use only one of: WithSkipHeader, WithSkipHeaderCount, or WithColumnMapping")
 		}
 		if skipHeader {
 			c.skip = 1
@@ -122,7 +125,7 @@ func WithSkipHeader(skipHeader bool) Option {
 func WithSkipHeaderCount(headerLineCount int) Option {
 	return func(c *Copier) error {
 		if c.skip != 0 {
-			return errors.New("skip is already set. Use SkipHeader or SkipHeaderCount")
+			return errors.New("skip is already set. Use only one of: WithSkipHeader, WithSkipHeaderCount, or WithColumnMapping")
 		}
 		if headerLineCount <= 0 {
 			return errors.New("header line count must be greater than zero")
@@ -290,6 +293,35 @@ func WithIdempotencyWindow(window time.Duration) Option {
 			return errors.New("idempotency window must be greater than zero")
 		}
 		c.idempotencyWindow = window
+		return nil
+	}
+}
+
+// WithColumnMapping sets the column mapping from CSV header names to database column names
+// Each ColumnMapping specifies CSVColumnName and DatabaseColumnName
+// This option automatically enables header skipping (sets skip to 1)
+func WithColumnMapping(mappings []ColumnMapping) Option {
+	return func(c *Copier) error {
+		if mappings == nil {
+			return errors.New("column mapping cannot be nil")
+		}
+		if c.skip != 0 {
+			return errors.New("skip is already set. Column mapping automatically handles header skipping")
+		}
+		if c.columns != "" {
+			return errors.New("columns are already set. Use only one of: WithColumns or WithColumnMapping")
+		}
+		for i, mapping := range mappings {
+			if mapping.CSVColumnName == "" {
+				return fmt.Errorf("column mapping at index %d has empty CSVColumnName", i)
+			}
+			if mapping.DatabaseColumnName == "" {
+				return fmt.Errorf("column mapping at index %d has empty DatabaseColumnName", i)
+			}
+		}
+		c.columnMapping = mappings
+		// Automatically set skip to 1 for header parsing
+		c.skip = 1
 		return nil
 	}
 }

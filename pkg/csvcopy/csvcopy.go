@@ -56,6 +56,7 @@ type Copier struct {
 	skip              int
 	importID          string
 	idempotencyWindow time.Duration
+	columnMapping     ColumnsMapping
 
 	// Rows that are inserted in the database by this copier instance
 	insertedRows int64
@@ -148,12 +149,18 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	if c.bufferSize > 0 {
 		bufferSize = c.bufferSize
 	}
-	
+
 	counter := &CountReader{Reader: reader}
 	bufferedReader := bufio.NewReaderSize(counter, bufferSize)
-	
-	// Skip headers if needed
-	if c.skip > 0 {
+
+	switch {
+	case len(c.columnMapping) > 0:
+		if c.skip != 1 {
+			return Result{}, fmt.Errorf("column mapping requires skip to be exactly 1 (one header row)")
+		}
+		c.calculateColumnsFromHeaders(bufferedReader)
+	case c.skip > 0:
+		// Just skip headers
 		err := skipHeaders(bufferedReader, c.skip)
 		if err != nil {
 			return Result{}, fmt.Errorf("failed to skip headers: %w", err)
@@ -196,12 +203,11 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	}
 
 	opts := scanOptions{
-		Size:           c.batchSize,
-		Skip:           c.skip,
-		Limit:          c.limit,
-		BufferByteSize: c.bufferSize,
-		BatchByteSize:  c.batchByteSize,
-		ImportID:       c.importID,
+		Size:          c.batchSize,
+		Skip:          c.skip,
+		Limit:         c.limit,
+		BatchByteSize: c.batchByteSize,
+		ImportID:      c.importID,
 	}
 
 	if c.quoteCharacter != "" {
@@ -254,6 +260,51 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		return result, err
 	}
 	return result, nil
+}
+
+// calculateColumnsFromHeaders parses the headers from the buffered reader and
+// calculates the columns to use for the COPY statement.
+// It uses the column mapping to map the CSV column names to the database column names.
+// It returns an error if the column mapping is not found for any header.
+// If no column mapping is provided, it uses all headers.
+func (c *Copier) calculateColumnsFromHeaders(bufferedReader *bufio.Reader) error {
+	// Parse headers for column mapping
+	quote := byte('"')
+	if c.quoteCharacter != "" {
+		quote = c.quoteCharacter[0]
+	}
+	escape := quote
+	if c.escapeCharacter != "" {
+		escape = c.escapeCharacter[0]
+	}
+
+	comma := ','
+	if c.splitCharacter != "" {
+		comma = rune(c.splitCharacter[0])
+	}
+
+	headers, err := parseHeaders(bufferedReader, c.skip, quote, escape, comma)
+	if err != nil {
+		return fmt.Errorf("failed to parse headers: %w", err)
+	}
+
+	if len(c.columnMapping) == 0 {
+		c.columns = strings.Join(headers, ",")
+		c.logger.Infof("No column mapping provided, using all headers: %v", headers)
+		return nil
+	}
+
+	columns := make([]string, 0, len(headers))
+	for _, header := range headers {
+		dbColumn, ok := c.columnMapping.Get(header)
+		if !ok {
+			return fmt.Errorf("column mapping not found for header %s", header)
+		}
+		columns = append(columns, dbColumn)
+	}
+	c.columns = strings.Join(columns, ",")
+	c.logger.Infof("Using column mapping: %v", c.columns)
+	return nil
 }
 
 type ErrAtRow struct {
@@ -495,4 +546,22 @@ func (c *Copier) GetTotalRows() int64 {
 
 func (c *Copier) HasImportID() bool {
 	return c.importID != ""
+}
+
+// ColumnsMapping defines mapping from CSV column name to database column name
+type ColumnsMapping []ColumnMapping
+
+func (c ColumnsMapping) Get(header string) (string, bool) {
+	for _, mapping := range c {
+		if mapping.CSVColumnName == header {
+			return mapping.DatabaseColumnName, true
+		}
+	}
+	return "", false
+}
+
+// ColumnMapping defines mapping from CSV column name to database column name
+type ColumnMapping struct {
+	CSVColumnName      string // CSV column name from header
+	DatabaseColumnName string // Database column name for COPY statement
 }

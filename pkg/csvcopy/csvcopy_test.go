@@ -1,10 +1,12 @@
 package csvcopy
 
 import (
+	"bufio"
 	"context"
 	"encoding/csv"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -1424,4 +1426,227 @@ func TestTransactionFailureRetry(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 4, total)
 	})
+}
+
+func TestCalculateColumnsFromHeaders(t *testing.T) {
+	tests := []struct {
+		name            string
+		csvHeaders      string
+		columnMapping   []ColumnMapping
+		quoteCharacter  string
+		escapeCharacter string
+		expectedColumns string
+		expectedError   string
+	}{
+		{
+			name:       "simple mapping",
+			csvHeaders: "user_id,full_name,email_address",
+			columnMapping: []ColumnMapping{
+				{CSVColumnName: "user_id", DatabaseColumnName: "id"},
+				{CSVColumnName: "full_name", DatabaseColumnName: "name"},
+				{CSVColumnName: "email_address", DatabaseColumnName: "email"},
+			},
+			expectedColumns: "id,name,email",
+		},
+		{
+			name:       "partial mapping",
+			csvHeaders: "id,name,age,email",
+			columnMapping: []ColumnMapping{
+				{CSVColumnName: "id", DatabaseColumnName: "user_id"},
+				{CSVColumnName: "name", DatabaseColumnName: "full_name"},
+				{CSVColumnName: "email", DatabaseColumnName: "email_addr"},
+			},
+			expectedError: "column mapping not found for header age",
+		},
+		{
+			name:       "quoted headers",
+			csvHeaders: `"user id","full name","email address"`,
+			columnMapping: []ColumnMapping{
+				{CSVColumnName: "user id", DatabaseColumnName: "id"},
+				{CSVColumnName: "full name", DatabaseColumnName: "name"},
+				{CSVColumnName: "email address", DatabaseColumnName: "email"},
+			},
+			expectedColumns: "id,name,email",
+		},
+		{
+			name:       "headers with spaces (no quotes)",
+			csvHeaders: "user id,full name,email address",
+			columnMapping: []ColumnMapping{
+				{CSVColumnName: "user id", DatabaseColumnName: "id"},
+				{CSVColumnName: "full name", DatabaseColumnName: "name"},
+				{CSVColumnName: "email address", DatabaseColumnName: "email"},
+			},
+			expectedColumns: "id,name,email",
+		},
+		{
+			name:       "empty header",
+			csvHeaders: "id,,email",
+			columnMapping: []ColumnMapping{
+				{CSVColumnName: "id", DatabaseColumnName: "user_id"},
+				{CSVColumnName: "", DatabaseColumnName: "middle_col"},
+				{CSVColumnName: "email", DatabaseColumnName: "email_addr"},
+			},
+			expectedColumns: "user_id,middle_col,email_addr",
+		},
+		{
+			name:       "single column",
+			csvHeaders: "id",
+			columnMapping: []ColumnMapping{
+				{CSVColumnName: "id", DatabaseColumnName: "user_id"},
+			},
+			expectedColumns: "user_id",
+		},
+		{
+			name:       "complex quoted headers with commas",
+			csvHeaders: `"user,id","full,name","email,address"`,
+			columnMapping: []ColumnMapping{
+				{CSVColumnName: "user,id", DatabaseColumnName: "id"},
+				{CSVColumnName: "full,name", DatabaseColumnName: "name"},
+				{CSVColumnName: "email,address", DatabaseColumnName: "email"},
+			},
+			expectedColumns: "id,name,email",
+		},
+		{
+			name:            "custom quote character",
+			csvHeaders:      "'user id','full name','email address'",
+			quoteCharacter:  "'",
+			escapeCharacter: "'",
+			columnMapping: []ColumnMapping{
+				{CSVColumnName: "user id", DatabaseColumnName: "id"},
+				{CSVColumnName: "full name", DatabaseColumnName: "name"},
+				{CSVColumnName: "email address", DatabaseColumnName: "email"},
+			},
+			expectedColumns: "id,name,email",
+		},
+		{
+			name:       "case sensitive mapping",
+			csvHeaders: "ID,Name,Email",
+			columnMapping: []ColumnMapping{
+				{CSVColumnName: "id", DatabaseColumnName: "user_id"},
+				{CSVColumnName: "Name", DatabaseColumnName: "full_name"},
+				{CSVColumnName: "Email", DatabaseColumnName: "email_addr"},
+			},
+			expectedError: "column mapping not found for header ID",
+		},
+		{
+			name:       "order preservation",
+			csvHeaders: "email,id,name",
+			columnMapping: []ColumnMapping{
+				{CSVColumnName: "id", DatabaseColumnName: "user_id"},
+				{CSVColumnName: "name", DatabaseColumnName: "full_name"},
+				{CSVColumnName: "email", DatabaseColumnName: "email_addr"},
+			},
+			expectedColumns: "email_addr,user_id,full_name",
+		},
+		{
+			name:            "no column mapping - use all headers",
+			csvHeaders:      `"user id","full name","email address"`,
+			columnMapping:   []ColumnMapping{}, // Empty mapping - triggers "No column mapping provided" log
+			expectedColumns: "user id,full name,email address",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a copier with the test configuration
+			copier := &Copier{
+				skip:            1,
+				columnMapping:   ColumnsMapping(tt.columnMapping),
+				quoteCharacter:  tt.quoteCharacter,
+				escapeCharacter: tt.escapeCharacter,
+				logger:          &noopLogger{},
+			}
+
+			// Create a buffered reader with the test CSV headers
+			csvData := tt.csvHeaders + "\ndata1,data2,data3\n"
+			reader := strings.NewReader(csvData)
+			counter := &CountReader{Reader: reader}
+			bufferedReader := bufio.NewReaderSize(counter, 1024)
+
+			// Call the function under test
+			err := copier.calculateColumnsFromHeaders(bufferedReader)
+
+			// Check the results
+			if tt.expectedError != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedError)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.expectedColumns, copier.columns)
+			}
+		})
+	}
+}
+
+func TestCalculateColumnsFromHeaders_NoMapping(t *testing.T) {
+	// Test the case where no column mapping is provided
+	copier := &Copier{
+		skip:          1,
+		columnMapping: ColumnsMapping{}, // Empty mapping
+		logger:        &noopLogger{},
+	}
+
+	csvData := "id,name,email\ndata1,data2,data3\n"
+	reader := strings.NewReader(csvData)
+	counter := &CountReader{Reader: reader}
+	bufferedReader := bufio.NewReaderSize(counter, 1024)
+
+	err := copier.calculateColumnsFromHeaders(bufferedReader)
+
+	require.NoError(t, err)
+	assert.Equal(t, "id,name,email", copier.columns)
+}
+
+func TestColumnsMapping_Get(t *testing.T) {
+	mapping := ColumnsMapping{
+		{CSVColumnName: "user_id", DatabaseColumnName: "id"},
+		{CSVColumnName: "full_name", DatabaseColumnName: "name"},
+		{CSVColumnName: "email_address", DatabaseColumnName: "email"},
+	}
+
+	tests := []struct {
+		name           string
+		header         string
+		expectedColumn string
+		expectedFound  bool
+	}{
+		{
+			name:           "existing mapping",
+			header:         "user_id",
+			expectedColumn: "id",
+			expectedFound:  true,
+		},
+		{
+			name:           "another existing mapping",
+			header:         "email_address",
+			expectedColumn: "email",
+			expectedFound:  true,
+		},
+		{
+			name:           "non-existing mapping",
+			header:         "age",
+			expectedColumn: "",
+			expectedFound:  false,
+		},
+		{
+			name:           "empty header",
+			header:         "",
+			expectedColumn: "",
+			expectedFound:  false,
+		},
+		{
+			name:           "case sensitive",
+			header:         "USER_ID",
+			expectedColumn: "",
+			expectedFound:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			column, found := mapping.Get(tt.header)
+			assert.Equal(t, tt.expectedFound, found)
+			assert.Equal(t, tt.expectedColumn, column)
+		})
+	}
 }
