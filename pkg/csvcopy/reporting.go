@@ -14,15 +14,20 @@ type Report struct {
 	Timestamp time.Time
 	StartedAt time.Time
 
-	RowCount int64
+	// Rows inserted into the database by this copier instance
+	InsertedRows int64
+	// Rows skipped because they were already processed
+	SkippedRows int64
+	// Total rows read from source
+	TotalRows int64
 }
 
 func (r *Report) Rate() float64 {
-	return float64(r.RowCount) / float64(r.Timestamp.Sub(r.StartedAt).Seconds())
+	return float64(r.InsertedRows) / float64(r.Timestamp.Sub(r.StartedAt).Seconds())
 }
 
 func (r *Report) RateSince(previous Report) float64 {
-	return float64(r.RowCount-previous.RowCount) / float64(r.Timestamp.Sub(previous.Timestamp).Seconds())
+	return float64(r.InsertedRows-previous.InsertedRows) / float64(r.Timestamp.Sub(previous.Timestamp).Seconds())
 }
 
 func formatDuration(dur time.Duration) string {
@@ -49,9 +54,10 @@ func formatDuration(dur time.Duration) string {
 
 func DefaultReportFunc(logger Logger) ReportFunc {
 	previous := Report{
-		StartedAt: time.Now(),
-		Timestamp: time.Now(),
-		RowCount:  0,
+		StartedAt:    time.Now(),
+		Timestamp:    time.Now(),
+		InsertedRows: 0,
+		TotalRows:    0,
 	}
 	p := message.NewPrinter(language.English)
 
@@ -61,11 +67,13 @@ func DefaultReportFunc(logger Logger) ReportFunc {
 		totalTook := r.Timestamp.Sub(r.StartedAt)
 
 		logger.Infof(
-			"(%s), row rate %0.2f/sec (period), row rate %0.2f/sec (overall), %s total rows",
+			"(%s), row rate %0.2f/sec (period), row rate %0.2f/sec (overall), %s inserted rows, %s skipped rows, %s total rows",
 			formatDuration(totalTook),
 			rowrate,
 			overallRowrate,
-			p.Sprintf("%d", r.RowCount),
+			p.Sprintf("%d", r.InsertedRows),
+			p.Sprintf("%d", r.SkippedRows),
+			p.Sprintf("%d", r.TotalRows),
 		)
 		previous = r
 	}

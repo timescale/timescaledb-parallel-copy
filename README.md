@@ -174,6 +174,12 @@ $ timescaledb-parallel-copy --connection $DATABASE_URL --table sample --file foo
 # Treat literal string 'NULL' as NULLs:
 $ timescaledb-parallel-copy --connection $DATABASE_URL --table sample --file foo.csv \
     --copy-options "NULL 'NULL' CSV"
+
+# Set an import ID to guarantee idempotency
+# It can be executed multiple times and the file will be imported only once
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table sample --file foo.csv \
+    --import-id "import-foo.csv"
+
 ```
 
 Other options and flags are also available:
@@ -200,6 +206,8 @@ Usage of timescaledb-parallel-copy:
         File to read from rather than stdin
   -header-line-count int
         Number of header lines (default 1)
+  -import-id string
+        ImportID to guarantee idempotency
   -limit int
         Number of rows to insert overall; 0 means to insert all
   -log-batches
@@ -226,7 +234,6 @@ Usage of timescaledb-parallel-copy:
         Show the version of this tool
   -workers int
         Number of parallel requests to make (default 1)
-
 ```
 
 ## Purpose

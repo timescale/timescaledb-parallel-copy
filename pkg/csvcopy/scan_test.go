@@ -1,31 +1,33 @@
-package batch_test
+package csvcopy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-	"github.com/timescale/timescaledb-parallel-copy/pkg/batch"
+	"github.com/stretchr/testify/assert"
 	"golang.org/x/exp/rand"
 )
 
 func TestScan(t *testing.T) {
 	cases := []struct {
-		name     string
-		input    []string
-		size     int
-		skip     int
-		limit    int64
-		quote    rune // default '"'
-		escape   rune // default is c.quote
-		expected []string
+		name             string
+		input            []string
+		size             int
+		bufferSize       int
+		batchSize        int
+		skip             int
+		limit            int64
+		quote            rune // default '"'
+		escape           rune // default is c.quote
+		expected         []string
+		expectedRowCount []int
+		expectedError    string
 	}{
 		{
 			name: "basic split",
@@ -40,6 +42,10 @@ func TestScan(t *testing.T) {
 				"a,b,c\n1,2,3\n",
 				"4,5,6\n7,8,9",
 			},
+			expectedRowCount: []int{
+				2,
+				2,
+			},
 		},
 		{
 			name: "leftover rows",
@@ -53,6 +59,10 @@ func TestScan(t *testing.T) {
 			expected: []string{
 				"a,b,c\n1,2,3\n4,5,6\n",
 				"7,8,9",
+			},
+			expectedRowCount: []int{
+				3,
+				1,
 			},
 		},
 		{
@@ -70,6 +80,10 @@ func TestScan(t *testing.T) {
 				"1,2,3\n4,5,6\n",
 				"7,8,9",
 			},
+			expectedRowCount: []int{
+				2,
+				1,
+			},
 		},
 		{
 			name: "scan limit",
@@ -83,6 +97,10 @@ func TestScan(t *testing.T) {
 			expected: []string{
 				"a,b,c\n",
 				"1,2,3\n",
+			},
+			expectedRowCount: []int{
+				1,
+				1,
 			},
 		},
 		{
@@ -111,6 +129,10 @@ func TestScan(t *testing.T) {
 				strings.Repeat("1111", 4096) + "\n" + strings.Repeat("2222", 4096) + "\n",
 				strings.Repeat("3333", 4096) + "\n" + strings.Repeat("4444", 4096),
 			},
+			expectedRowCount: []int{
+				2,
+				2,
+			},
 		},
 		{
 			name: "long lines with limit",
@@ -126,6 +148,10 @@ func TestScan(t *testing.T) {
 				strings.Repeat("1111", 4096) + "\n" + strings.Repeat("2222", 4096) + "\n",
 				strings.Repeat("3333", 4096) + "\n",
 			},
+			expectedRowCount: []int{
+				2,
+				1,
+			},
 		},
 		{
 			name: "long lines with header and limit",
@@ -140,6 +166,9 @@ func TestScan(t *testing.T) {
 			limit: 2,
 			expected: []string{
 				strings.Repeat("2222", 4096) + "\n" + strings.Repeat("3333", 4096) + "\n",
+			},
+			expectedRowCount: []int{
+				2,
 			},
 		},
 		{
@@ -170,6 +199,10 @@ d"
 7,8,"9
 10"`,
 			},
+			expectedRowCount: []int{
+				2,
+				2,
+			},
 		},
 		{
 			name: "quoted multi-line rows with skipped header lines",
@@ -198,6 +231,10 @@ d"
 				`7,8,"9
 10"`,
 			},
+			expectedRowCount: []int{
+				2,
+				1,
+			},
 		},
 		{
 			name:  "custom-quoted multi-line rows",
@@ -216,6 +253,9 @@ d"
 d'
 1,'2
 3',4`,
+			},
+			expectedRowCount: []int{
+				2,
 			},
 		},
 		{
@@ -236,20 +276,74 @@ d"
 1,"2
 3",4`,
 			},
+			expectedRowCount: []int{
+				2,
+			},
+		},
+		{
+			name: "buffer size is smaller than line size",
+			input: []string{
+				strings.Repeat("a", 4096),
+				strings.Repeat("1", 4096),
+				strings.Repeat("2", 4096),
+				strings.Repeat("3", 4096),
+			},
+			size:          2,
+			bufferSize:    1024,
+			expectedError: bufio.ErrBufferFull.Error(),
+		},
+		{
+			name: "batch size is smaller than buffer size",
+			input: []string{
+				strings.Repeat("a", 4096),
+				strings.Repeat("1", 4096),
+				strings.Repeat("2", 4096),
+				strings.Repeat("3", 4096),
+			},
+			size:          2,
+			batchSize:     1024,
+			bufferSize:    2048,
+			expectedError: "batch size (1024) is smaller than buffer size (2048)",
+		},
+		{
+			name: "batch size is hit before line limit",
+			input: []string{
+				strings.Repeat("a", 4096),
+				strings.Repeat("1", 4096),
+				strings.Repeat("2", 4096),
+				strings.Repeat("3", 4096),
+			},
+			size:       2,
+			batchSize:  5000,
+			bufferSize: 5000,
+			expected: []string{
+				strings.Repeat("a", 4096) + "\n",
+				strings.Repeat("1", 4096) + "\n",
+				strings.Repeat("2", 4096) + "\n",
+				strings.Repeat("3", 4096),
+			},
+			expectedRowCount: []int{
+				1,
+				1,
+				1,
+				1,
+			},
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			rowChan := make(chan batch.Batch)
+			rowChan := make(chan Batch)
 			resultChan := make(chan []string)
 
 			// Collector for the scanned row batches.
 			go func() {
 				var actual []string
-
+				i := 0
 				for buf := range rowChan {
-					actual = append(actual, string(bytes.Join(buf.Data, nil)))
+					assert.EqualValues(t, c.expectedRowCount[i], buf.Location.RowCount, "on batch %d", i)
+					actual = append(actual, string(bytes.Join(buf.data, nil)))
+					i++
 				}
 
 				resultChan <- actual
@@ -257,28 +351,35 @@ d"
 
 			all := strings.Join(c.input, "\n")
 			reader := strings.NewReader(all)
-			opts := batch.Options{
-				Size:   c.size,
-				Skip:   c.skip,
-				Limit:  c.limit,
-				Quote:  byte(c.quote),
-				Escape: byte(c.escape),
+			opts := scanOptions{
+				Size:           c.size,
+				Skip:           c.skip,
+				Limit:          c.limit,
+				Quote:          byte(c.quote),
+				Escape:         byte(c.escape),
+				BufferByteSize: c.bufferSize,
+				BatchByteSize:  c.batchSize,
 			}
 
-			err := batch.Scan(context.Background(), reader, rowChan, opts)
+			err := scan(context.Background(), reader, rowChan, opts)
 			if err != nil {
-				t.Fatalf("Scan() returned error: %v", err)
+				if c.expectedError == "" {
+					assert.NoError(t, err)
+				} else {
+					assert.Contains(t, err.Error(), c.expectedError)
+				}
 			}
 
 			// Check results.
 			close(rowChan)
 			actual := <-resultChan
 
-			if !reflect.DeepEqual(actual, c.expected) {
-				t.Errorf("Scan() returned unexpected batch results")
-				t.Logf("got:\n%q", actual)
-				t.Logf("want:\n%q", c.expected)
-			}
+			assert.Equal(t, c.expected, actual)
+			// if !reflect.DeepEqual(actual, c.expected) {
+			// 	t.Errorf("Scan() returned unexpected batch results")
+			// 	t.Logf("got:\n%q", actual)
+			// 	t.Logf("want:\n%q", c.expected)
+			// }
 		})
 	}
 
@@ -304,13 +405,13 @@ d"
 				should be discarded
 			`), expected)
 
-			rowChan := make(chan batch.Batch, 1)
-			opts := batch.Options{
+			rowChan := make(chan Batch, 1)
+			opts := scanOptions{
 				Size: 50,
 				Skip: c.skip,
 			}
 
-			err := batch.Scan(context.Background(), reader, rowChan, opts)
+			err := scan(context.Background(), reader, rowChan, opts)
 			if !errors.Is(err, expected) {
 				t.Errorf("Scan() returned unexpected error: %v", err)
 				t.Logf("want: %v", expected)
@@ -396,7 +497,7 @@ func BenchmarkScan(b *testing.B) {
 		// Real-world cases need thousands of lines per batch to perform well.
 		// parallel-copy defaults to 5000, so that seems like a good number to
 		// start optimizing here.
-		opts := batch.Options{
+		opts := scanOptions{
 			Size: 5000,
 		}
 		data := strings.Repeat(bm.line+"\n", opts.Size)
@@ -412,14 +513,14 @@ func BenchmarkScan(b *testing.B) {
 
 			b.Run(name, func(b *testing.B) {
 				// Make sure our output channel won't block. This relies on each
-				// call to Scan() producing exactly one batch.
-				rowChan := make(chan batch.Batch, b.N)
+				// call to Scan() producing exactly one batch
+				rowChan := make(chan Batch, b.N)
 				b.ResetTimer()
 
 				for i := 0; i < b.N; i++ {
 					reader.Reset(data) // rewind to the beginning
 
-					err := batch.Scan(context.Background(), reader, rowChan, opts)
+					err := scan(context.Background(), reader, rowChan, opts)
 					if err != nil {
 						b.Errorf("Scan() returned unexpected error: %v", err)
 					}
@@ -440,34 +541,4 @@ func RandString(n int) string {
 		b[i] = letterRunes[rand.Intn(len(letterRunes))]
 	}
 	return string(b)
-}
-
-func TestRewind(t *testing.T) {
-	randomData := RandString(5000)
-	data := net.Buffers(bytes.Split([]byte(randomData), []byte(",")))
-
-	batch := batch.NewBatch(data, batch.NewLocation(0, 0, 0, 0, 0))
-
-	var err error
-	// reads all the data
-	buf := bytes.Buffer{}
-	_, err = buf.ReadFrom(&batch.Data)
-	require.NoError(t, err)
-	require.Equal(t, strings.Replace(randomData, ",", "", -1), buf.String())
-	require.Empty(t, batch.Data)
-
-	// Reading again returns nothing
-	buf = bytes.Buffer{}
-	_, err = buf.ReadFrom(&batch.Data)
-	require.NoError(t, err)
-	require.Empty(t, buf.String())
-	require.Empty(t, batch.Data)
-
-	// Reading again after rewind, returns all data
-	batch.Rewind()
-	buf = bytes.Buffer{}
-	_, err = buf.ReadFrom(&batch.Data)
-	require.NoError(t, err)
-	require.Equal(t, strings.Replace(randomData, ",", "", -1), buf.String())
-
 }
