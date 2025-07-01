@@ -159,7 +159,10 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		if c.skip != 1 {
 			return Result{}, fmt.Errorf("column mapping requires skip to be exactly 1 (one header row)")
 		}
-		c.calculateColumnsFromHeaders(bufferedReader)
+		err := c.calculateColumnsFromHeaders(bufferedReader)
+		if err != nil {
+			return Result{}, fmt.Errorf("failed to calculate columns from headers: %w", err)
+		}
 	case c.skip > 0:
 		// Just skip headers
 		err := skipHeaders(bufferedReader, c.skip)
