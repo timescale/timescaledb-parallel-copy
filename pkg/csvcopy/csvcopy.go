@@ -160,6 +160,8 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	}
 
 	if c.useColumnMapping {
+		// Increment number of skipped lines to account for the header line
+		c.skip++
 		if err := c.calculateColumnsFromHeaders(bufferedReader); err != nil {
 			return Result{}, fmt.Errorf("failed to calculate columns from headers: %w", err)
 		}
