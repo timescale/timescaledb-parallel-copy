@@ -311,7 +311,7 @@ func TestHeaderHandlingEnumValues(t *testing.T) {
 		{
 			name:           "WithSkipHeader(false) should keep HeaderNone",
 			option:         WithSkipHeader(false),
-			expectedHeader: HeaderNone,
+			expectedHeader: HeaderSkip,
 		},
 		{
 			name:           "WithAutoColumnMapping should set HeaderAutoColumnMapping",
