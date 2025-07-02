@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
@@ -28,6 +29,7 @@ const (
 	HeaderAutoColumnMapping
 	HeaderColumnMapping
 )
+
 
 type Result struct {
 	// InsertedRows is the number of rows inserted into the database by this copier instance
@@ -298,7 +300,11 @@ func (c *Copier) calculateColumnsFromHeaders(bufferedReader *bufio.Reader) error
 	}
 
 	if len(c.columnMapping) == 0 {
-		c.columns = strings.Join(headers, ",")
+		quotedHeaders := make([]string, len(headers))
+		for i, header := range headers {
+			quotedHeaders[i] = pgx.Identifier{header}.Sanitize()
+		}
+		c.columns = strings.Join(quotedHeaders, ",")
 		c.logger.Infof("automatic column mapping: %s", c.columns)
 		return nil
 	}
@@ -309,7 +315,7 @@ func (c *Copier) calculateColumnsFromHeaders(bufferedReader *bufio.Reader) error
 		if !ok {
 			return fmt.Errorf("column mapping not found for header %s", header)
 		}
-		columns = append(columns, dbColumn)
+		columns = append(columns, pgx.Identifier{dbColumn}.Sanitize())
 	}
 	c.columns = strings.Join(columns, ",")
 	c.logger.Infof("Using column mapping: %s", c.columns)

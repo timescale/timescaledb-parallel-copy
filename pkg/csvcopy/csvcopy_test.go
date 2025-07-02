@@ -1707,7 +1707,7 @@ func TestCalculateColumnsFromHeaders(t *testing.T) {
 				{CSVColumnName: "full_name", DatabaseColumnName: "name"},
 				{CSVColumnName: "email_address", DatabaseColumnName: "email"},
 			},
-			expectedColumns: "id,name,email",
+			expectedColumns: "\"id\",\"name\",\"email\"",
 		},
 		{
 			name:       "partial mapping",
@@ -1727,7 +1727,7 @@ func TestCalculateColumnsFromHeaders(t *testing.T) {
 				{CSVColumnName: "full name", DatabaseColumnName: "name"},
 				{CSVColumnName: "email address", DatabaseColumnName: "email"},
 			},
-			expectedColumns: "id,name,email",
+			expectedColumns: "\"id\",\"name\",\"email\"",
 		},
 		{
 			name:       "headers with spaces (no quotes)",
@@ -1737,7 +1737,7 @@ func TestCalculateColumnsFromHeaders(t *testing.T) {
 				{CSVColumnName: "full name", DatabaseColumnName: "name"},
 				{CSVColumnName: "email address", DatabaseColumnName: "email"},
 			},
-			expectedColumns: "id,name,email",
+			expectedColumns: "\"id\",\"name\",\"email\"",
 		},
 		{
 			name:       "empty header",
@@ -1747,7 +1747,7 @@ func TestCalculateColumnsFromHeaders(t *testing.T) {
 				{CSVColumnName: "", DatabaseColumnName: "middle_col"},
 				{CSVColumnName: "email", DatabaseColumnName: "email_addr"},
 			},
-			expectedColumns: "user_id,middle_col,email_addr",
+			expectedColumns: "\"user_id\",\"middle_col\",\"email_addr\"",
 		},
 		{
 			name:       "single column",
@@ -1755,7 +1755,7 @@ func TestCalculateColumnsFromHeaders(t *testing.T) {
 			columnMapping: []ColumnMapping{
 				{CSVColumnName: "id", DatabaseColumnName: "user_id"},
 			},
-			expectedColumns: "user_id",
+			expectedColumns: "\"user_id\"",
 		},
 		{
 			name:       "complex quoted headers with commas",
@@ -1765,7 +1765,7 @@ func TestCalculateColumnsFromHeaders(t *testing.T) {
 				{CSVColumnName: "full,name", DatabaseColumnName: "name"},
 				{CSVColumnName: "email,address", DatabaseColumnName: "email"},
 			},
-			expectedColumns: "id,name,email",
+			expectedColumns: "\"id\",\"name\",\"email\"",
 		},
 		{
 			name:            "custom quote character",
@@ -1777,7 +1777,7 @@ func TestCalculateColumnsFromHeaders(t *testing.T) {
 				{CSVColumnName: "full name", DatabaseColumnName: "name"},
 				{CSVColumnName: "email address", DatabaseColumnName: "email"},
 			},
-			expectedColumns: "id,name,email",
+			expectedColumns: "\"id\",\"name\",\"email\"",
 		},
 		{
 			name:       "case sensitive mapping",
@@ -1797,13 +1797,13 @@ func TestCalculateColumnsFromHeaders(t *testing.T) {
 				{CSVColumnName: "name", DatabaseColumnName: "full_name"},
 				{CSVColumnName: "email", DatabaseColumnName: "email_addr"},
 			},
-			expectedColumns: "email_addr,user_id,full_name",
+			expectedColumns: "\"email_addr\",\"user_id\",\"full_name\"",
 		},
 		{
 			name:            "no column mapping - use all headers",
 			csvHeaders:      `"user id","full name","email address"`,
 			columnMapping:   []ColumnMapping{}, // Empty mapping - triggers "No column mapping provided" log
-			expectedColumns: "user id,full name,email address",
+			expectedColumns: "\"user id\",\"full name\",\"email address\"",
 		},
 	}
 
@@ -1855,7 +1855,7 @@ func TestCalculateColumnsFromHeaders_NoMapping(t *testing.T) {
 	err := copier.calculateColumnsFromHeaders(bufferedReader)
 
 	require.NoError(t, err)
-	assert.Equal(t, "id,name,email", copier.columns)
+	assert.Equal(t, "\"id\",\"name\",\"email\"", copier.columns)
 }
 
 func TestColumnsMapping_Get(t *testing.T) {
