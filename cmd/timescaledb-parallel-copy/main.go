@@ -156,9 +156,11 @@ func main() {
 	opts = append(opts, csvcopy.WithBatchErrorHandler(batchErrorHandler))
 
 	if skipHeader {
-		opts = append(opts,
-			csvcopy.WithSkipHeaderCount(headerLinesCnt),
-		)
+		if headerLinesCnt == 1 {
+			opts = append(opts, csvcopy.WithSkipHeader(true))
+		} else {
+			opts = append(opts, csvcopy.WithSkipHeaderCount(headerLinesCnt))
+		}
 	}
 
 	copier, err := csvcopy.NewCopier(
