@@ -100,7 +100,7 @@ func WithEscapeCharacter(escapeCharacter string) Option {
 // WithColumns accepts a list of comma separated values for the csv columns
 func WithColumns(columns string) Option {
 	return func(c *Copier) error {
-		if c.useColumnMapping {
+		if c.useFileHeaders == HeaderAutoColumnMapping || c.useFileHeaders == HeaderColumnMapping {
 			return errors.New("column mapping is already set. Use only one of: WithColumns, WithColumnMapping, or WithAutoColumnMapping")
 		}
 		c.columns = columns
@@ -114,6 +114,12 @@ func WithSkipHeader(skipHeader bool) Option {
 		if c.skip != 0 {
 			return errors.New("skip is already set. Use only one of: WithSkipHeader or WithSkipHeaderCount")
 		}
+
+		if c.useFileHeaders != HeaderNone {
+			return errors.New("header handling is already configured. Use only one of: WithSkipHeader, WithColumnMapping, or WithAutoColumnMapping")
+		}
+		c.useFileHeaders = HeaderSkip
+
 		if skipHeader {
 			c.skip = 1
 		}
@@ -305,8 +311,8 @@ func WithColumnMapping(mappings []ColumnMapping) Option {
 		if mappings == nil {
 			return errors.New("column mapping cannot be nil")
 		}
-		if c.useColumnMapping {
-			return errors.New("column mapping is already set. Use only one of: WithColumns, WithColumnMapping, or WithAutoColumnMapping")
+		if c.useFileHeaders != HeaderNone {
+			return errors.New("header handling is already configured. Use only one of: WithSkipHeader, WithColumnMapping, or WithAutoColumnMapping")
 		}
 		if c.columns != "" {
 			return errors.New("columns are already set. Use only one of: WithColumns, WithColumnMapping, or WithAutoColumnMapping")
@@ -320,7 +326,7 @@ func WithColumnMapping(mappings []ColumnMapping) Option {
 			}
 		}
 		c.columnMapping = mappings
-		c.useColumnMapping = true
+		c.useFileHeaders = HeaderColumnMapping
 		return nil
 	}
 }
@@ -330,13 +336,13 @@ func WithColumnMapping(mappings []ColumnMapping) Option {
 // This option automatically enables header skipping (sets skip to 1)
 func WithAutoColumnMapping() Option {
 	return func(c *Copier) error {
+		if c.useFileHeaders != HeaderNone {
+			return errors.New("header handling is already configured. Use only one of: WithSkipHeader, WithColumnMapping, or WithAutoColumnMapping")
+		}
 		if c.columns != "" {
 			return errors.New("columns are already set. Use only one of: WithColumns, WithColumnMapping, or WithAutoColumnMapping")
 		}
-		if c.useColumnMapping {
-			return errors.New("column mapping is already set. Use only one of: WithColumns, WithColumnMapping, or WithAutoColumnMapping")
-		}
-		c.useColumnMapping = true
+		c.useFileHeaders = HeaderAutoColumnMapping
 		return nil
 	}
 }

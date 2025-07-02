@@ -20,6 +20,15 @@ import (
 
 const TAB_CHAR_STR = "\\t"
 
+type HeaderHandling int
+
+const (
+	HeaderNone HeaderHandling = iota
+	HeaderSkip
+	HeaderAutoColumnMapping
+	HeaderColumnMapping
+)
+
 type Result struct {
 	// InsertedRows is the number of rows inserted into the database by this copier instance
 	InsertedRows int64
@@ -57,7 +66,7 @@ type Copier struct {
 	importID          string
 	idempotencyWindow time.Duration
 	columnMapping     ColumnsMapping
-	useColumnMapping  bool
+	useFileHeaders    HeaderHandling
 
 	// Rows that are inserted in the database by this copier instance
 	insertedRows int64
@@ -159,7 +168,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		}
 	}
 
-	if c.useColumnMapping {
+	if c.useFileHeaders == HeaderAutoColumnMapping || c.useFileHeaders == HeaderColumnMapping {
 		// Increment number of skipped lines to account for the header line
 		c.skip++
 		if err := c.calculateColumnsFromHeaders(bufferedReader); err != nil {
