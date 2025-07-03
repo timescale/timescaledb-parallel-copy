@@ -41,6 +41,7 @@ var (
 	autoColumnMapping bool
 	skipHeader        bool
 	headerLinesCnt    int
+	skipLines         int
 	skipBatchErrors   bool
 
 	importID        string
@@ -76,7 +77,8 @@ func init() {
 	flag.BoolVar(&autoColumnMapping, "auto-column-mapping", false, "Automatically map CSV headers to database columns with the same names")
 
 	flag.BoolVar(&skipHeader, "skip-header", false, "Skip the first line of the input")
-	flag.IntVar(&headerLinesCnt, "header-line-count", 1, "Number of header lines")
+	flag.IntVar(&headerLinesCnt, "header-line-count", 1, "(deprecated) Number of header lines")
+	flag.IntVar(&skipLines, "skip-lines", 0, "Skip the first n lines of the input. it is applied before skip-header")
 
 	flag.BoolVar(&skipBatchErrors, "skip-batch-errors", false, "if true, the copy will continue even if a batch fails")
 
@@ -110,6 +112,11 @@ func main() {
 	if dbName != "" {
 		log.Fatalf("Error: Deprecated flag -db-name is being used. Update -connection to connect to the given database")
 	}
+
+	if headerLinesCnt != 1 {
+		log.Fatalf("Error: -header-line-count is deprecated. Use -skip-lines instead")
+	}
+
 	logger := &csvCopierLogger{}
 
 	opts := []csvcopy.Option{
@@ -155,12 +162,12 @@ func main() {
 	}
 	opts = append(opts, csvcopy.WithBatchErrorHandler(batchErrorHandler))
 
+	if skipLines > 0 {
+		opts = append(opts, csvcopy.WithSkipHeaderCount(skipLines))
+	}
+
 	if skipHeader {
-		if headerLinesCnt == 1 {
-			opts = append(opts, csvcopy.WithSkipHeader(true))
-		} else {
-			opts = append(opts, csvcopy.WithSkipHeaderCount(headerLinesCnt))
-		}
+		opts = append(opts, csvcopy.WithSkipHeader(true))
 	}
 
 	copier, err := csvcopy.NewCopier(
