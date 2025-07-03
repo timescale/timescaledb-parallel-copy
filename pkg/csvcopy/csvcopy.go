@@ -30,7 +30,6 @@ const (
 	HeaderColumnMapping
 )
 
-
 type Result struct {
 	// InsertedRows is the number of rows inserted into the database by this copier instance
 	InsertedRows int64
@@ -163,6 +162,10 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 
 	counter := &CountReader{Reader: reader}
 	bufferedReader := bufio.NewReaderSize(counter, bufferSize)
+
+	if c.useFileHeaders != HeaderSkip {
+		c.skip++
+	}
 
 	if c.skip > 0 {
 		if err := skipLines(bufferedReader, c.skip); err != nil {

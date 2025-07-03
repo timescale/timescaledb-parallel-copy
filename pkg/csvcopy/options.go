@@ -111,18 +111,10 @@ func WithColumns(columns string) Option {
 // WithSkipHeader is set, skips the first row of the csv file
 func WithSkipHeader(skipHeader bool) Option {
 	return func(c *Copier) error {
-		if c.skip != 0 {
-			return errors.New("skip is already set. Use only one of: WithSkipHeader or WithSkipHeaderCount")
-		}
-
 		if c.useFileHeaders != HeaderNone {
 			return errors.New("header handling is already configured. Use only one of: WithSkipHeader, WithColumnMapping, or WithAutoColumnMapping")
 		}
 		c.useFileHeaders = HeaderSkip
-
-		if skipHeader {
-			c.skip = 1
-		}
 		return nil
 	}
 }
@@ -131,7 +123,7 @@ func WithSkipHeader(skipHeader bool) Option {
 func WithSkipHeaderCount(headerLineCount int) Option {
 	return func(c *Copier) error {
 		if c.skip != 0 {
-			return errors.New("skip is already set. Use only one of: WithSkipHeader or WithSkipHeaderCount")
+			return errors.New("skip is already set")
 		}
 		if headerLineCount <= 0 {
 			return errors.New("header line count must be greater than zero")

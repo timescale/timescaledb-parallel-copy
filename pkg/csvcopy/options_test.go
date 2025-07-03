@@ -168,25 +168,6 @@ func TestOptionsMutualExclusivity(t *testing.T) {
 			errorContains: "column mapping is already set",
 		},
 
-		// WithSkipHeader vs WithSkipHeaderCount conflicts
-		{
-			name: "WithSkipHeader + WithSkipHeaderCount should fail",
-			options: []Option{
-				WithSkipHeader(true),
-				WithSkipHeaderCount(2),
-			},
-			expectError:   true,
-			errorContains: "skip is already set",
-		},
-		{
-			name: "WithSkipHeaderCount + WithSkipHeader should fail",
-			options: []Option{
-				WithSkipHeaderCount(2),
-				WithSkipHeader(true),
-			},
-			expectError:   true,
-			errorContains: "skip is already set",
-		},
 
 		// Valid combinations that should work
 		{
@@ -202,6 +183,14 @@ func TestOptionsMutualExclusivity(t *testing.T) {
 			options: []Option{
 				WithSkipHeaderCount(2),
 				WithColumns("col1,col2"),
+			},
+			expectError: false,
+		},
+		{
+			name: "WithSkipHeader + WithSkipHeaderCount should work",
+			options: []Option{
+				WithSkipHeader(true),
+				WithSkipHeaderCount(3),
 			},
 			expectError: false,
 		},
