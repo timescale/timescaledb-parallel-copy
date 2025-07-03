@@ -174,10 +174,16 @@ Other options and flags are also available:
 $ timescaledb-parallel-copy --help
 
 Usage of timescaledb-parallel-copy:
-  -batch-error-output-dir string
-        directory to store batch errors. Settings this will save a .csv file with the contents of the batch that failed and continue with the rest of the data.
+  -auto-column-mapping
+        Automatically map CSV headers to database columns with the same names
+  -batch-byte-size int
+        Max number of bytes to send in a batch (default 20971520)
   -batch-size int
-        Number of rows per insert (default 5000)
+        Number of rows per insert. It will be limited by batch-byte-size (default 5000)
+  -buffer-byte-size int
+        Number of bytes to buffer, it has to be big enough to hold a full row (default 2097152)
+  -column-mapping string
+        Column mapping from CSV to database columns (format: "csv_col1:db_col1,csv_col2:db_col2" or JSON)
   -columns string
         Comma-separated columns present in CSV
   -connection string
@@ -221,6 +227,52 @@ Usage of timescaledb-parallel-copy:
   -workers int
         Number of parallel requests to make (default 1)
 ```
+
+### Column Mapping
+
+The tool exposes two flags `--column-mapping` and `--auto-column-mapping` that allow to handle csv headers in a smart way.
+
+`--column-mapping` allows to specify how the columns from your csv map into database columns. It supports two formats:
+
+**Simple format:**
+```bash
+# Map CSV columns to database columns with different names
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table metrics --file data.csv \
+    --column-mapping "timestamp:time,temperature:temp_celsius,humidity:humidity_percent"
+```
+
+**JSON format:**
+```bash
+# Same mapping using JSON format
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table metrics --file data.csv \
+    --column-mapping '{"timestamp":"time","temperature":"temp_celsius","humidity":"humidity_percent"}'
+```
+
+Example CSV file with headers:
+```csv
+timestamp,temperature,humidity
+2023-01-01 00:00:00,20.5,65.2
+2023-01-01 01:00:00,21.0,64.8
+```
+
+This maps the CSV columns to database columns: `timestamp` → `time`, `temperature` → `temp_celsius`, `humidity` → `humidity_percent`.
+
+`--auto-column-mapping` covers the common case when your csv columns have the same name as your database columns.
+
+```bash
+# Automatically map CSV headers to database columns with identical names
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table sensors --file sensors.csv \
+    --auto-column-mapping
+```
+
+Example CSV file with headers matching database columns:
+```csv
+time,device_id,temperature,humidity
+2023-01-01 00:00:00,sensor_001,20.5,65.2
+2023-01-01 01:00:00,sensor_002,21.0,64.8
+```
+
+Both flags automatically skip the header row and cannot be used together with `--skip-header` or `--columns`.
 
 ## Purpose
 
