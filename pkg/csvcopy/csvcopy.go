@@ -163,7 +163,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	counter := &CountReader{Reader: reader}
 	bufferedReader := bufio.NewReaderSize(counter, bufferSize)
 
-	if c.useFileHeaders != HeaderSkip {
+	if c.useFileHeaders == HeaderSkip {
 		c.skip++
 	}
 
