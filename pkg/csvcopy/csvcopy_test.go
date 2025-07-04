@@ -1805,6 +1805,47 @@ func TestCalculateColumnsFromHeaders(t *testing.T) {
 			columnMapping:   []ColumnMapping{}, // Empty mapping - triggers "No column mapping provided" log
 			expectedColumns: "\"user id\",\"full name\",\"email address\"",
 		},
+		{
+			name:       "column mapping with more keys than CSV headers",
+			csvHeaders: "id,name",
+			columnMapping: []ColumnMapping{
+				{CSVColumnName: "id", DatabaseColumnName: "user_id"},
+				{CSVColumnName: "name", DatabaseColumnName: "full_name"},
+				{CSVColumnName: "email", DatabaseColumnName: "email_addr"}, // Extra mapping key
+				{CSVColumnName: "age", DatabaseColumnName: "user_age"},     // Another extra mapping key
+			},
+			expectedColumns: "\"user_id\",\"full_name\"", // Only mapped columns from CSV headers
+		},
+		{
+			name:       "duplicate database columns in mapping",
+			csvHeaders: "first_name,last_name,email",
+			columnMapping: []ColumnMapping{
+				{CSVColumnName: "first_name", DatabaseColumnName: "name"},
+				{CSVColumnName: "last_name", DatabaseColumnName: "name"}, // Same database column
+				{CSVColumnName: "email", DatabaseColumnName: "email_addr"},
+			},
+			expectedError: "duplicate database column name: \"name\"",
+		},
+		{
+			name:       "duplicate database columns in mapping but doesn't create a conflict",
+			csvHeaders: "first_name,email",
+			columnMapping: []ColumnMapping{
+				{CSVColumnName: "first_name", DatabaseColumnName: "name"},
+				{CSVColumnName: "name", DatabaseColumnName: "name"}, // legacy field mapping exmaple
+				{CSVColumnName: "email", DatabaseColumnName: "email_addr"},
+			},
+			expectedColumns: "\"name\",\"email_addr\"",
+		},
+		{
+			name:       "duplicate csv column name in mapping",
+			csvHeaders: "first_name,email",
+			columnMapping: []ColumnMapping{
+				{CSVColumnName: "first_name", DatabaseColumnName: "name"},
+				{CSVColumnName: "first_name", DatabaseColumnName: "first_name"}, // ERROR: it is duplicated
+				{CSVColumnName: "email", DatabaseColumnName: "email_addr"},
+			},
+			expectedError: "duplicate source column name: \"first_name\"",
+		},
 	}
 
 	for _, tt := range tests {

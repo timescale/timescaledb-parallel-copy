@@ -228,6 +228,38 @@ Usage of timescaledb-parallel-copy:
         Number of parallel requests to make (default 1)
 ```
 
+
+## Purpose
+
+PostgreSQL native `COPY` function is transactional and single-threaded, and may not be suitable for ingesting large
+amounts of data. Assuming the file is at least loosely chronologically ordered with respect to the hypertable's time
+dimension, this tool should give you great performance gains by parallelizing this operation, allowing users to take
+full advantage of their hardware.
+
+This tool also takes care to ingest data in a more efficient manner by roughly preserving the order of the rows. By
+taking a "round-robin" approach to sharing inserts between parallel workers, the database has to switch between chunks
+less often. This improves memory management and keeps operations on the disk as sequential as possible.
+
+## Contributing
+
+We welcome contributions to this utility, which like TimescaleDB is released under the Apache2 Open Source License. The same [Contributors Agreement](//github.com/timescale/timescaledb/blob/master/CONTRIBUTING.md) applies; please sign the [Contributor License Agreement](https://cla-assistant.io/timescale/timescaledb-parallel-copy) (CLA) if you're a new contributor.
+
+## Running Tests
+
+Some of the tests require a running Postgres database. Set the `TEST_CONNINFO`
+environment variable to point at the database you want to run tests against.
+(Assume that the tests may be destructive; in particular it is not advisable to
+point the tests at any production database.)
+
+For example:
+
+```
+$ createdb gotest
+$ TEST_CONNINFO='dbname=gotest user=myuser' go test -v ./...
+```
+
+## Advanced usage
+
 ### Column Mapping
 
 The tool exposes two flags `--column-mapping` and `--auto-column-mapping` that allow to handle csv headers in a smart way.
@@ -274,31 +306,45 @@ time,device_id,temperature,humidity
 
 Both flags automatically skip the header row and cannot be used together with `--skip-header` or `--columns`.
 
-## Purpose
+**Flexible Column Mapping:**
 
-PostgreSQL native `COPY` function is transactional and single-threaded, and may not be suitable for ingesting large
-amounts of data. Assuming the file is at least loosely chronologically ordered with respect to the hypertable's time
-dimension, this tool should give you great performance gains by parallelizing this operation, allowing users to take
-full advantage of their hardware.
+Column mappings can include entries for columns that are not present in the input CSV file. This allows you to use the same mapping configuration across multiple input files with different column sets:
 
-This tool also takes care to ingest data in a more efficient manner by roughly preserving the order of the rows. By
-taking a "round-robin" approach to sharing inserts between parallel workers, the database has to switch between chunks
-less often. This improves memory management and keeps operations on the disk as sequential as possible.
-
-## Contributing
-
-We welcome contributions to this utility, which like TimescaleDB is released under the Apache2 Open Source License. The same [Contributors Agreement](//github.com/timescale/timescaledb/blob/master/CONTRIBUTING.md) applies; please sign the [Contributor License Agreement](https://cla-assistant.io/timescale/timescaledb-parallel-copy) (CLA) if you're a new contributor.
-
-### Running Tests
-
-Some of the tests require a running Postgres database. Set the `TEST_CONNINFO`
-environment variable to point at the database you want to run tests against.
-(Assume that the tests may be destructive; in particular it is not advisable to
-point the tests at any production database.)
-
-For example:
-
+```bash
+# Define a comprehensive mapping that works with multiple CSV formats
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table sensors --file partial_data.csv \
+    --column-mapping "timestamp:time,temp:temperature,humidity:humidity_percent,pressure:pressure_hpa,location:device_location"
 ```
-$ createdb gotest
-$ TEST_CONNINFO='dbname=gotest user=myuser' go test -v ./...
+
+Example CSV file with only some of the mapped columns:
+```csv
+timestamp,temp,humidity
+2023-01-01 00:00:00,20.5,65.2
+2023-01-01 01:00:00,21.0,64.8
 ```
+
+In this case, only the `timestamp`, `temp`, and `humidity` columns from the CSV will be processed and mapped to `time`, `temperature`, and `humidity_percent` respectively. The unused mappings for `pressure` and `location` are simply ignored, allowing the same mapping configuration to work with different input files that may have varying column sets.
+
+You can also map different CSV column names to the same database column, as long as only one of them appears in any given input file:
+
+```bash
+# Map both 'temp' and 'temperature' to the same database column
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table sensors --file data.csv \
+    --column-mapping "timestamp:time,temp:temperature,temperature:temperature,humidity:humidity_percent"
+```
+
+This allows importing from different file formats into the same table:
+
+**File A** (uses 'temp'):
+```csv
+timestamp,temp,humidity
+2023-01-01 00:00:00,20.5,65.2
+```
+
+**File B** (uses 'temperature'):
+```csv
+timestamp,temperature,humidity
+2023-01-01 02:00:00,22.1,63.5
+```
+
+Both files can use the same mapping configuration and import successfully into the same database table, even though they use different column names for the temperature data. The tool only validates for duplicate database columns among the columns actually present in each specific input file.

@@ -276,50 +276,86 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	return result, nil
 }
 
-// calculateColumnsFromHeaders parses the headers from the buffered reader and
-// calculates the columns to use for the COPY statement.
-// It uses the column mapping to map the CSV column names to the database column names.
-// It returns an error if the column mapping is not found for any header.
-// If no column mapping is provided, it uses all headers.
-func (c *Copier) calculateColumnsFromHeaders(bufferedReader *bufio.Reader) error {
-	// Parse headers for column mapping
+func parseCSVHeaders(bufferedReader *bufio.Reader, quoteCharacter, escapeCharacter, splitCharacter string) ([]string, error) {
 	quote := byte('"')
-	if c.quoteCharacter != "" {
-		quote = c.quoteCharacter[0]
+	if quoteCharacter != "" {
+		quote = quoteCharacter[0]
 	}
 	escape := quote
-	if c.escapeCharacter != "" {
-		escape = c.escapeCharacter[0]
+	if escapeCharacter != "" {
+		escape = escapeCharacter[0]
 	}
 
 	comma := ','
-	if c.splitCharacter != "" {
-		comma = rune(c.splitCharacter[0])
+	if splitCharacter != "" {
+		comma = rune(splitCharacter[0])
 	}
 
-	headers, err := parseHeaders(bufferedReader, quote, escape, comma)
+	return parseHeaders(bufferedReader, quote, escape, comma)
+}
+
+func (c *Copier) useAutomaticColumnMapping(headers []string) error {
+	quotedHeaders := make([]string, len(headers))
+	for i, header := range headers {
+		quotedHeaders[i] = pgx.Identifier{header}.Sanitize()
+	}
+	c.columns = strings.Join(quotedHeaders, ",")
+	c.logger.Infof("automatic column mapping: %s", c.columns)
+	return nil
+}
+
+func validateColumnMapping(columnMapping ColumnsMapping) error {
+	seenMappingCSVColumns := make(map[string]bool)
+	for _, mapping := range columnMapping {
+		if seenMappingCSVColumns[mapping.CSVColumnName] {
+			return fmt.Errorf("duplicate source column name: %q", mapping.CSVColumnName)
+		}
+		seenMappingCSVColumns[mapping.CSVColumnName] = true
+	}
+	return nil
+}
+
+func buildColumnsFromMapping(headers []string, columnMapping ColumnsMapping) ([]string, error) {
+	columns := make([]string, 0, len(headers))
+	seenColumns := make(map[string]bool)
+
+	for _, header := range headers {
+		dbColumn, ok := columnMapping.Get(header)
+		if !ok {
+			return nil, fmt.Errorf("column mapping not found for header %s", header)
+		}
+
+		sanitizedColumn := pgx.Identifier{dbColumn}.Sanitize()
+		if seenColumns[sanitizedColumn] {
+			return nil, fmt.Errorf("duplicate database column name: %s", sanitizedColumn)
+		}
+
+		seenColumns[sanitizedColumn] = true
+		columns = append(columns, sanitizedColumn)
+	}
+
+	return columns, nil
+}
+
+func (c *Copier) calculateColumnsFromHeaders(bufferedReader *bufio.Reader) error {
+	headers, err := parseCSVHeaders(bufferedReader, c.quoteCharacter, c.escapeCharacter, c.splitCharacter)
 	if err != nil {
 		return fmt.Errorf("failed to parse headers: %w", err)
 	}
 
 	if len(c.columnMapping) == 0 {
-		quotedHeaders := make([]string, len(headers))
-		for i, header := range headers {
-			quotedHeaders[i] = pgx.Identifier{header}.Sanitize()
-		}
-		c.columns = strings.Join(quotedHeaders, ",")
-		c.logger.Infof("automatic column mapping: %s", c.columns)
-		return nil
+		return c.useAutomaticColumnMapping(headers)
 	}
 
-	columns := make([]string, 0, len(headers))
-	for _, header := range headers {
-		dbColumn, ok := c.columnMapping.Get(header)
-		if !ok {
-			return fmt.Errorf("column mapping not found for header %s", header)
-		}
-		columns = append(columns, pgx.Identifier{dbColumn}.Sanitize())
+	if err := validateColumnMapping(c.columnMapping); err != nil {
+		return err
 	}
+
+	columns, err := buildColumnsFromMapping(headers, c.columnMapping)
+	if err != nil {
+		return err
+	}
+
 	c.columns = strings.Join(columns, ",")
 	c.logger.Infof("Using column mapping: %s", c.columns)
 	return nil
