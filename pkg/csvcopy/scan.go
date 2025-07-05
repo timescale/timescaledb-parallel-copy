@@ -11,11 +11,10 @@ import (
 
 // scanOptions contains all the configurable knobs for Scan.
 type scanOptions struct {
-	Size           int   // maximum number of rows per batch, It may be less than this if ChunkByteSize is reached first
-	Skip           int   // how many header lines to skip at the beginning
-	Limit          int64 // total number of rows to scan after the header.
-	BufferByteSize int   // buffer size for the reader. it has to be big enough to hold a full row
-	BatchByteSize  int   // Max byte size for a batch.
+	Size          int   // maximum number of rows per batch, It may be less than this if ChunkByteSize is reached first
+	Skip          int   // how many header lines to skip at the beginning
+	Limit         int64 // total number of rows to scan after the header.
+	BatchByteSize int   // Max byte size for a batch.
 
 	Quote  byte // the QUOTE character; defaults to '"'
 	Escape byte // the ESCAPE character; defaults to QUOTE
@@ -100,51 +99,22 @@ func (l Location) HasImportID() bool {
 	return l.ImportID != ""
 }
 
-// scan reads all lines from an io.Reader, partitions them into net.Buffers with
-// opts.Size rows each, and writes each batch to the out channel. If opts.Skip
-// is greater than zero, that number of lines will be discarded from the
-// beginning of the data. If opts.Limit is greater than zero, then scan will
-// stop once it has written that number of rows, across all batches, to the
-// channel.
+// scan reads all lines from a pre-configured buffered reader, partitions them into net.Buffers with
+// opts.Size rows each, and writes each batch to the out channel. If opts.Limit is greater than zero,
+// then scan will stop once it has written that number of rows, across all batches, to the channel.
 //
 // scan expects the input to be in Postgres CSV format. Since this format allows
 // rows to be split over multiple lines, the caller may provide opts.Quote and
 // opts.Escape as the QUOTE and ESCAPE characters used for the CSV input.
-func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) error {
+//
+// The caller is responsible for setting up the CountReader and buffered reader,
+// and for skipping any headers before calling this function.
+func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out chan<- Batch, opts scanOptions) error {
 	var rowsRead int64
-	counter := &CountReader{Reader: r}
-
-	bufferSize := 2 * 1024 * 1024 // 2 MB buffer
-	if opts.BufferByteSize > 0 {
-		bufferSize = opts.BufferByteSize
-	}
 
 	batchSize := 20 * 1024 * 1024 // 20 MB batch size
 	if opts.BatchByteSize > 0 {
 		batchSize = opts.BatchByteSize
-	}
-
-	if batchSize < bufferSize {
-		return fmt.Errorf("batch size (%d) is smaller than buffer size (%d)", batchSize, bufferSize)
-	}
-
-	reader := bufio.NewReaderSize(counter, bufferSize)
-
-	for skip := opts.Skip; skip > 0; {
-		// The use of ReadLine() here avoids copying or buffering data that
-		// we're just going to discard.
-		_, isPrefix, err := reader.ReadLine()
-
-		if err == io.EOF {
-			// No data?
-			return nil
-		} else if err != nil {
-			return fmt.Errorf("skipping header: %w", err)
-		}
-		if !isPrefix {
-			// We pulled a full row from the buffer.
-			skip--
-		}
 	}
 
 	quote := byte('"')
@@ -198,7 +168,7 @@ func scan(ctx context.Context, r io.Reader, out chan<- Batch, opts scanOptions) 
 		switch err {
 		case bufio.ErrBufferFull:
 			// If we hit buffer full, we do not have enough data to read a full row
-			return fmt.Errorf("reading lines, %w", err)
+			return fmt.Errorf("reading lines, %w. you should provably increase batch size", err)
 
 		case io.EOF:
 			// Also fine, but unlike ErrBufferFull we won't have another
@@ -379,4 +349,113 @@ func (c *CountReader) Read(b []byte) (int, error) {
 	n, err := c.Reader.Read(b)
 	c.Total += n
 	return n, err
+}
+
+// skipLines skips the specified number of lines starting from the very beginning of the file.
+func skipLines(reader *bufio.Reader, skip int) error {
+	for skip > 0 {
+		// The use of ReadLine() here avoids copying or buffering data that
+		// we're just going to discard.
+		_, isPrefix, err := reader.ReadLine()
+
+		if err == io.EOF {
+			// No data?
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("skipping line: %w", err)
+		}
+		if !isPrefix {
+			// We pulled a full row from the buffer.
+			skip--
+		}
+	}
+	return nil
+}
+
+// parseHeaders parses the first header line and skips remaining header lines
+func parseHeaders(reader *bufio.Reader, quote, escape byte, comma rune) ([]string, error) {
+	// Read the first header line
+	var headerLine []byte
+	for {
+		data, isPrefix, err := reader.ReadLine()
+		if err == io.EOF {
+			return []string{}, nil
+		} else if err != nil {
+			return nil, fmt.Errorf("reading header: %w", err)
+		}
+
+		headerLine = append(headerLine, data...)
+		if !isPrefix {
+			// We have a complete line
+			break
+		}
+	}
+
+	// Parse the CSV header line using PostgreSQL CSV format
+	// (which differs from standard CSV in escape handling)
+	headers, err := parsePostgreSQLCSVLine(string(headerLine), comma, quote, escape)
+	if err != nil {
+		return nil, fmt.Errorf("parsing header line: %w", err)
+	}
+
+	return headers, nil
+}
+
+// parsePostgreSQLCSVLine parses a CSV line using PostgreSQL CSV format rules
+// This handles quote, escape, and comma characters as PostgreSQL COPY expects
+func parsePostgreSQLCSVLine(line string, comma rune, quote, escape byte) ([]string, error) {
+	var fields []string
+	var field []byte
+	var inQuote bool
+
+	for i := 0; i < len(line); i++ {
+		b := line[i]
+
+		if inQuote {
+			if b == escape && i+1 < len(line) {
+				// Handle escape sequences - look ahead to see what's being escaped
+				next := line[i+1]
+				if next == quote || next == escape {
+					// Valid escape sequence, add the escaped character
+					field = append(field, next)
+					i++ // Skip the next character as it's been consumed
+					continue
+				}
+			}
+
+			if b == quote {
+				// End of quoted field
+				inQuote = false
+				continue
+			}
+
+			// Regular character inside quotes
+			field = append(field, b)
+		} else {
+			if b == quote {
+				// Start of quoted field
+				inQuote = true
+				continue
+			}
+
+			if rune(b) == comma {
+				// Field separator
+				fields = append(fields, string(field))
+				field = field[:0]
+				continue
+			}
+
+			// Regular character outside quotes
+			field = append(field, b)
+		}
+	}
+
+	// Add the last field
+	fields = append(fields, string(field))
+
+	if inQuote {
+		return nil, fmt.Errorf("unterminated quoted field in header line")
+	}
+
+	return fields, nil
 }
