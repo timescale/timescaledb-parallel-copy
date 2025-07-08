@@ -1,6 +1,7 @@
 package csvcopy
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -12,12 +13,22 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
 )
 
 const TAB_CHAR_STR = "\\t"
+
+type HeaderHandling int
+
+const (
+	HeaderNone HeaderHandling = iota
+	HeaderSkip
+	HeaderAutoColumnMapping
+	HeaderColumnMapping
+)
 
 type Result struct {
 	// InsertedRows is the number of rows inserted into the database by this copier instance
@@ -55,6 +66,8 @@ type Copier struct {
 	skip              int
 	importID          string
 	idempotencyWindow time.Duration
+	columnMapping     ColumnsMapping
+	useFileHeaders    HeaderHandling
 
 	// Rows that are inserted in the database by this copier instance
 	insertedRows int64
@@ -131,7 +144,6 @@ func (c *Copier) Truncate() (err error) {
 }
 
 func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
-
 	if c.HasImportID() {
 		if err := ensureTransactionTable(ctx, c.connString); err != nil {
 			return Result{}, fmt.Errorf("failed to ensure transaction table, %w", err)
@@ -139,6 +151,33 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		c.logger.Infof("Cleaning old transactions older than %s", c.idempotencyWindow)
 		if err := cleanOldTransactions(ctx, c.connString, c.idempotencyWindow); err != nil {
 			return Result{}, fmt.Errorf("failed to clean old transactions, %w", err)
+		}
+	}
+
+	// Setup reader with buffering for header skipping
+	bufferSize := 2 * 1024 * 1024 // 2 MB buffer
+	if c.bufferSize > 0 {
+		bufferSize = c.bufferSize
+	}
+
+	counter := &CountReader{Reader: reader}
+	bufferedReader := bufio.NewReaderSize(counter, bufferSize)
+
+	if c.useFileHeaders == HeaderSkip {
+		c.skip++
+	}
+
+	if c.skip > 0 {
+		if err := skipLines(bufferedReader, c.skip); err != nil {
+			return Result{}, fmt.Errorf("failed to skip lines: %w", err)
+		}
+	}
+
+	if c.useFileHeaders == HeaderAutoColumnMapping || c.useFileHeaders == HeaderColumnMapping {
+		// Increment number of skipped lines to account for the header line
+		c.skip++
+		if err := c.calculateColumnsFromHeaders(bufferedReader); err != nil {
+			return Result{}, fmt.Errorf("failed to calculate columns from headers: %w", err)
 		}
 	}
 
@@ -178,12 +217,11 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	}
 
 	opts := scanOptions{
-		Size:           c.batchSize,
-		Skip:           c.skip,
-		Limit:          c.limit,
-		BufferByteSize: c.bufferSize,
-		BatchByteSize:  c.batchByteSize,
-		ImportID:       c.importID,
+		Size:          c.batchSize,
+		Skip:          c.skip,
+		Limit:         c.limit,
+		BatchByteSize: c.batchByteSize,
+		ImportID:      c.importID,
 	}
 
 	if c.quoteCharacter != "" {
@@ -199,7 +237,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		if err := scan(ctx, reader, batchChan, opts); err != nil {
+		if err := scan(ctx, counter, bufferedReader, batchChan, opts); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
 			cancel()
 		}
@@ -236,6 +274,91 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		return result, err
 	}
 	return result, nil
+}
+
+func parseCSVHeaders(bufferedReader *bufio.Reader, quoteCharacter, escapeCharacter, splitCharacter string) ([]string, error) {
+	quote := byte('"')
+	if quoteCharacter != "" {
+		quote = quoteCharacter[0]
+	}
+	escape := quote
+	if escapeCharacter != "" {
+		escape = escapeCharacter[0]
+	}
+
+	comma := ','
+	if splitCharacter != "" {
+		comma = rune(splitCharacter[0])
+	}
+
+	return parseHeaders(bufferedReader, quote, escape, comma)
+}
+
+func (c *Copier) useAutomaticColumnMapping(headers []string) error {
+	quotedHeaders := make([]string, len(headers))
+	for i, header := range headers {
+		quotedHeaders[i] = pgx.Identifier{header}.Sanitize()
+	}
+	c.columns = strings.Join(quotedHeaders, ",")
+	c.logger.Infof("automatic column mapping: %s", c.columns)
+	return nil
+}
+
+func validateColumnMapping(columnMapping ColumnsMapping) error {
+	seenMappingCSVColumns := make(map[string]bool)
+	for _, mapping := range columnMapping {
+		if seenMappingCSVColumns[mapping.CSVColumnName] {
+			return fmt.Errorf("duplicate source column name: %q", mapping.CSVColumnName)
+		}
+		seenMappingCSVColumns[mapping.CSVColumnName] = true
+	}
+	return nil
+}
+
+func buildColumnsFromMapping(headers []string, columnMapping ColumnsMapping) ([]string, error) {
+	columns := make([]string, 0, len(headers))
+	seenColumns := make(map[string]bool)
+
+	for _, header := range headers {
+		dbColumn, ok := columnMapping.Get(header)
+		if !ok {
+			return nil, fmt.Errorf("column mapping not found for header %s", header)
+		}
+
+		sanitizedColumn := pgx.Identifier{dbColumn}.Sanitize()
+		if seenColumns[sanitizedColumn] {
+			return nil, fmt.Errorf("duplicate database column name: %s", sanitizedColumn)
+		}
+
+		seenColumns[sanitizedColumn] = true
+		columns = append(columns, sanitizedColumn)
+	}
+
+	return columns, nil
+}
+
+func (c *Copier) calculateColumnsFromHeaders(bufferedReader *bufio.Reader) error {
+	headers, err := parseCSVHeaders(bufferedReader, c.quoteCharacter, c.escapeCharacter, c.splitCharacter)
+	if err != nil {
+		return fmt.Errorf("failed to parse headers: %w", err)
+	}
+
+	if len(c.columnMapping) == 0 {
+		return c.useAutomaticColumnMapping(headers)
+	}
+
+	if err := validateColumnMapping(c.columnMapping); err != nil {
+		return err
+	}
+
+	columns, err := buildColumnsFromMapping(headers, c.columnMapping)
+	if err != nil {
+		return err
+	}
+
+	c.columns = strings.Join(columns, ",")
+	c.logger.Infof("Using column mapping: %s", c.columns)
+	return nil
 }
 
 type ErrAtRow struct {
@@ -477,4 +600,22 @@ func (c *Copier) GetTotalRows() int64 {
 
 func (c *Copier) HasImportID() bool {
 	return c.importID != ""
+}
+
+// ColumnsMapping defines mapping from CSV column name to database column name
+type ColumnsMapping []ColumnMapping
+
+func (c ColumnsMapping) Get(header string) (string, bool) {
+	for _, mapping := range c {
+		if mapping.CSVColumnName == header {
+			return mapping.DatabaseColumnName, true
+		}
+	}
+	return "", false
+}
+
+// ColumnMapping defines mapping from CSV column name to database column name
+type ColumnMapping struct {
+	CSVColumnName      string // CSV column name from header
+	DatabaseColumnName string // Database column name for COPY statement
 }

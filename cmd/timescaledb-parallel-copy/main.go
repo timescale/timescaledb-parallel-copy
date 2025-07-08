@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/timescale/timescaledb-parallel-copy/pkg/csvcopy"
@@ -33,11 +35,14 @@ var (
 	quoteCharacter  string
 	escapeCharacter string
 
-	fromFile        string
-	columns         string
-	skipHeader      bool
-	headerLinesCnt  int
-	skipBatchErrors bool
+	fromFile          string
+	columns           string
+	columnMapping     string
+	autoColumnMapping bool
+	skipHeader        bool
+	headerLinesCnt    int
+	skipLines         int
+	skipBatchErrors   bool
 
 	importID        string
 	workers         int
@@ -68,8 +73,12 @@ func init() {
 	flag.StringVar(&escapeCharacter, "escape", "", "The ESCAPE `character` to use during COPY (default '\"')")
 	flag.StringVar(&fromFile, "file", "", "File to read from rather than stdin")
 	flag.StringVar(&columns, "columns", "", "Comma-separated columns present in CSV")
+	flag.StringVar(&columnMapping, "column-mapping", "", "Column mapping from CSV to database columns (format: \"csv_col1:db_col1,csv_col2:db_col2\" or JSON)")
+	flag.BoolVar(&autoColumnMapping, "auto-column-mapping", false, "Automatically map CSV headers to database columns with the same names")
+
 	flag.BoolVar(&skipHeader, "skip-header", false, "Skip the first line of the input")
-	flag.IntVar(&headerLinesCnt, "header-line-count", 1, "Number of header lines")
+	flag.IntVar(&headerLinesCnt, "header-line-count", 1, "(deprecated) Number of header lines")
+	flag.IntVar(&skipLines, "skip-lines", 0, "Skip the first n lines of the input. it is applied before skip-header")
 
 	flag.BoolVar(&skipBatchErrors, "skip-batch-errors", false, "if true, the copy will continue even if a batch fails")
 
@@ -103,6 +112,11 @@ func main() {
 	if dbName != "" {
 		log.Fatalf("Error: Deprecated flag -db-name is being used. Update -connection to connect to the given database")
 	}
+
+	if headerLinesCnt != 1 {
+		log.Fatalf("Error: -header-line-count is deprecated. Use -skip-lines instead")
+	}
+
 	logger := &csvCopierLogger{}
 
 	opts := []csvcopy.Option{
@@ -127,6 +141,18 @@ func main() {
 		opts = append(opts, csvcopy.WithImportID(importID))
 	}
 
+	if columnMapping != "" {
+		mapping, err := parseColumnMapping(columnMapping)
+		if err != nil {
+			log.Fatalf("Error parsing column mapping: %v", err)
+		}
+		opts = append(opts, csvcopy.WithColumnMapping(mapping))
+	}
+
+	if autoColumnMapping {
+		opts = append(opts, csvcopy.WithAutoColumnMapping())
+	}
+
 	batchErrorHandler := csvcopy.BatchHandlerError()
 	if skipBatchErrors {
 		batchErrorHandler = csvcopy.BatchHandlerNoop()
@@ -136,10 +162,12 @@ func main() {
 	}
 	opts = append(opts, csvcopy.WithBatchErrorHandler(batchErrorHandler))
 
+	if skipLines > 0 {
+		opts = append(opts, csvcopy.WithSkipHeaderCount(skipLines))
+	}
+
 	if skipHeader {
-		opts = append(opts,
-			csvcopy.WithSkipHeaderCount(headerLinesCnt),
-		)
+		opts = append(opts, csvcopy.WithSkipHeader(true))
 	}
 
 	copier, err := csvcopy.NewCopier(
@@ -189,4 +217,74 @@ func main() {
 		)
 	}
 	fmt.Println(res)
+}
+
+// parseColumnMapping parses column mapping string into csvcopy.ColumnsMapping
+// Supports two formats:
+// 1. Simple: "csv_col1:db_col1,csv_col2:db_col2"
+// 2. JSON: {"csv_col1":"db_col1","csv_col2":"db_col2"}
+func parseColumnMapping(mappingStr string) (csvcopy.ColumnsMapping, error) {
+	if mappingStr == "" {
+		return nil, nil
+	}
+
+	mappingStr = strings.TrimSpace(mappingStr)
+
+	// Check if it's JSON format (starts with '{')
+	if strings.HasPrefix(mappingStr, "{") {
+		return parseJSONColumnMapping(mappingStr)
+	}
+
+	// Parse simple format: "csv_col1:db_col1,csv_col2:db_col2"
+	return parseSimpleColumnMapping(mappingStr)
+}
+
+// parseJSONColumnMapping parses JSON format column mapping
+func parseJSONColumnMapping(jsonStr string) (csvcopy.ColumnsMapping, error) {
+	var mappingMap map[string]string
+	if err := json.Unmarshal([]byte(jsonStr), &mappingMap); err != nil {
+		return nil, fmt.Errorf("invalid JSON format for column mapping: %w", err)
+	}
+
+	var mapping csvcopy.ColumnsMapping
+	for csvCol, dbCol := range mappingMap {
+		mapping = append(mapping, csvcopy.ColumnMapping{
+			CSVColumnName:      csvCol,
+			DatabaseColumnName: dbCol,
+		})
+	}
+
+	return mapping, nil
+}
+
+// parseSimpleColumnMapping parses simple format: "csv_col1:db_col1,csv_col2:db_col2"
+func parseSimpleColumnMapping(simpleStr string) (csvcopy.ColumnsMapping, error) {
+	pairs := strings.Split(simpleStr, ",")
+	var mapping csvcopy.ColumnsMapping
+
+	for i, pair := range pairs {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+
+		parts := strings.Split(pair, ":")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid column mapping format at position %d: '%s', expected 'csv_column:db_column'", i+1, pair)
+		}
+
+		csvCol := strings.TrimSpace(parts[0])
+		dbCol := strings.TrimSpace(parts[1])
+
+		if csvCol == "" || dbCol == "" {
+			return nil, fmt.Errorf("empty column name in mapping at position %d: '%s'", i+1, pair)
+		}
+
+		mapping = append(mapping, csvcopy.ColumnMapping{
+			CSVColumnName:      csvCol,
+			DatabaseColumnName: dbCol,
+		})
+	}
+
+	return mapping, nil
 }
