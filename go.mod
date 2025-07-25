@@ -1,8 +1,8 @@
 module github.com/timescale/timescaledb-parallel-copy
 
-go 1.22.0
+go 1.23.11
 
-toolchain go1.23.4
+toolchain go1.23.11
 
 require (
 	github.com/google/uuid v1.6.0
