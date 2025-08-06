@@ -2,7 +2,6 @@ package csvcopy
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -378,7 +377,10 @@ d"
 				i := 0
 				for buf := range rowChan {
 					assert.EqualValues(t, c.expectedRowCount[i], buf.Location.RowCount, "on batch %d", i)
-					actual = append(actual, string(bytes.Join(buf.data, nil)))
+					// Read all data from the Seekable buffer
+					buf.data.Seek(0, io.SeekStart)
+					data, _ := io.ReadAll(buf.data)
+					actual = append(actual, string(data))
 					i++
 				}
 
