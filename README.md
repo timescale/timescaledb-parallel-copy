@@ -188,10 +188,16 @@ Other options and flags are also available:
 $ timescaledb-parallel-copy --help
 
 Usage of timescaledb-parallel-copy:
-  -batch-error-output-dir string
-        directory to store batch errors. Settings this will save a .csv file with the contents of the batch that failed and continue with the rest of the data.
+  -auto-column-mapping
+        Automatically map CSV headers to database columns with the same names
+  -batch-byte-size int
+        Max number of bytes to send in a batch (default 20971520)
   -batch-size int
-        Number of rows per insert (default 5000)
+        Number of rows per insert. It will be limited by batch-byte-size (default 5000)
+  -buffer-byte-size int
+        Number of bytes to buffer, it has to be big enough to hold a full row (default 2097152)
+  -column-mapping string
+        Column mapping from CSV to database columns (format: "csv_col1:db_col1,csv_col2:db_col2" or JSON)
   -columns string
         Comma-separated columns present in CSV
   -connection string
@@ -236,6 +242,7 @@ Usage of timescaledb-parallel-copy:
         Number of parallel requests to make (default 1)
 ```
 
+
 ## Purpose
 
 PostgreSQL native `COPY` function is transactional and single-threaded, and may not be suitable for ingesting large
@@ -251,7 +258,7 @@ less often. This improves memory management and keeps operations on the disk as 
 
 We welcome contributions to this utility, which like TimescaleDB is released under the Apache2 Open Source License. The same [Contributors Agreement](//github.com/timescale/timescaledb/blob/master/CONTRIBUTING.md) applies; please sign the [Contributor License Agreement](https://cla-assistant.io/timescale/timescaledb-parallel-copy) (CLA) if you're a new contributor.
 
-### Running Tests
+## Running Tests
 
 Some of the tests require a running Postgres database. Set the `TEST_CONNINFO`
 environment variable to point at the database you want to run tests against.
@@ -264,3 +271,94 @@ For example:
 $ createdb gotest
 $ TEST_CONNINFO='dbname=gotest user=myuser' go test -v ./...
 ```
+
+## Advanced usage
+
+### Column Mapping
+
+The tool exposes two flags `--column-mapping` and `--auto-column-mapping` that allow to handle csv headers in a smart way.
+
+`--column-mapping` allows to specify how the columns from your csv map into database columns. It supports two formats:
+
+**Simple format:**
+```bash
+# Map CSV columns to database columns with different names
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table metrics --file data.csv \
+    --column-mapping "timestamp:time,temperature:temp_celsius,humidity:humidity_percent"
+```
+
+**JSON format:**
+```bash
+# Same mapping using JSON format
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table metrics --file data.csv \
+    --column-mapping '{"timestamp":"time","temperature":"temp_celsius","humidity":"humidity_percent"}'
+```
+
+Example CSV file with headers:
+```csv
+timestamp,temperature,humidity
+2023-01-01 00:00:00,20.5,65.2
+2023-01-01 01:00:00,21.0,64.8
+```
+
+This maps the CSV columns to database columns: `timestamp` → `time`, `temperature` → `temp_celsius`, `humidity` → `humidity_percent`.
+
+`--auto-column-mapping` covers the common case when your csv columns have the same name as your database columns.
+
+```bash
+# Automatically map CSV headers to database columns with identical names
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table sensors --file sensors.csv \
+    --auto-column-mapping
+```
+
+Example CSV file with headers matching database columns:
+```csv
+time,device_id,temperature,humidity
+2023-01-01 00:00:00,sensor_001,20.5,65.2
+2023-01-01 01:00:00,sensor_002,21.0,64.8
+```
+
+Both flags automatically skip the header row and cannot be used together with `--skip-header` or `--columns`.
+
+**Flexible Column Mapping:**
+
+Column mappings can include entries for columns that are not present in the input CSV file. This allows you to use the same mapping configuration across multiple input files with different column sets:
+
+```bash
+# Define a comprehensive mapping that works with multiple CSV formats
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table sensors --file partial_data.csv \
+    --column-mapping "timestamp:time,temp:temperature,humidity:humidity_percent,pressure:pressure_hpa,location:device_location"
+```
+
+Example CSV file with only some of the mapped columns:
+```csv
+timestamp,temp,humidity
+2023-01-01 00:00:00,20.5,65.2
+2023-01-01 01:00:00,21.0,64.8
+```
+
+In this case, only the `timestamp`, `temp`, and `humidity` columns from the CSV will be processed and mapped to `time`, `temperature`, and `humidity_percent` respectively. The unused mappings for `pressure` and `location` are simply ignored, allowing the same mapping configuration to work with different input files that may have varying column sets.
+
+You can also map different CSV column names to the same database column, as long as only one of them appears in any given input file:
+
+```bash
+# Map both 'temp' and 'temperature' to the same database column
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table sensors --file data.csv \
+    --column-mapping "timestamp:time,temp:temperature,temperature:temperature,humidity:humidity_percent"
+```
+
+This allows importing from different file formats into the same table:
+
+**File A** (uses 'temp'):
+```csv
+timestamp,temp,humidity
+2023-01-01 00:00:00,20.5,65.2
+```
+
+**File B** (uses 'temperature'):
+```csv
+timestamp,temperature,humidity
+2023-01-01 02:00:00,22.1,63.5
+```
+
+Both files can use the same mapping configuration and import successfully into the same database table, even though they use different column names for the temperature data. The tool only validates for duplicate database columns among the columns actually present in each specific input file.

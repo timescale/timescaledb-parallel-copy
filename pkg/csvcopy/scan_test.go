@@ -303,7 +303,7 @@ d"
 			size:          2,
 			batchSize:     1024,
 			bufferSize:    2048,
-			expectedError: "batch size (1024) is smaller than buffer size (2048)",
+			expectedError: "you should provably increase batch size",
 		},
 		{
 			name: "batch size is hit before line limit",
@@ -329,6 +329,42 @@ d"
 				1,
 			},
 		},
+		{
+			name: "simple quoted headers with skip",
+			input: []string{
+				`"user id","full name","email address"`,
+				`1,"John Doe","john@example.com"`,
+				`2,"Jane Smith","jane@example.com"`,
+			},
+			size: 2,
+			skip: 1,
+			expected: []string{
+				`1,"John Doe","john@example.com"
+2,"Jane Smith","jane@example.com"`,
+			},
+			expectedRowCount: []int{
+				2,
+			},
+		},
+		{
+			name: "skip first lines, then parse headers",
+			input: []string{
+				`# This is a comment`,
+				`# This is another comment`,
+				`# And the following line contain the actual headers`,
+				`a,b,c`,
+				`1,2,3`,
+				`4,5,6`,
+			},
+			size: 3,
+			skip: 3, // skip the comments, not the header line
+			expected: []string{
+				"a,b,c\n1,2,3\n4,5,6",
+			},
+			expectedRowCount: []int{
+				3,
+			},
+		},
 	}
 
 	for _, c := range cases {
@@ -352,16 +388,31 @@ d"
 			all := strings.Join(c.input, "\n")
 			reader := strings.NewReader(all)
 			opts := scanOptions{
-				Size:           c.size,
-				Skip:           c.skip,
-				Limit:          c.limit,
-				Quote:          byte(c.quote),
-				Escape:         byte(c.escape),
-				BufferByteSize: c.bufferSize,
-				BatchByteSize:  c.batchSize,
+				Size:          c.size,
+				Skip:          c.skip,
+				Limit:         c.limit,
+				Quote:         byte(c.quote),
+				Escape:        byte(c.escape),
+				BatchByteSize: c.batchSize,
 			}
 
-			err := scan(context.Background(), reader, rowChan, opts)
+			counter := &CountReader{Reader: reader}
+			bufferSize := 2 * 1024 * 1024
+			if c.bufferSize > 0 {
+				bufferSize = c.bufferSize
+			}
+			bufferedReader := bufio.NewReaderSize(counter, bufferSize)
+
+			// Skip headers if needed
+			if opts.Skip > 0 {
+				err := skipLines(bufferedReader, opts.Skip)
+				if err != nil {
+					assert.NoError(t, err)
+					return
+				}
+			}
+
+			err := scan(context.Background(), counter, bufferedReader, rowChan, opts)
 			if err != nil {
 				if c.expectedError == "" {
 					assert.NoError(t, err)
@@ -411,7 +462,19 @@ d"
 				Skip: c.skip,
 			}
 
-			err := scan(context.Background(), reader, rowChan, opts)
+			counter := &CountReader{Reader: reader}
+			bufferedReader := bufio.NewReaderSize(counter, 2*1024*1024)
+
+			// Skip headers if needed
+			if opts.Skip > 0 {
+				err := skipLines(bufferedReader, opts.Skip)
+				if !errors.Is(err, expected) {
+					t.Errorf("Scan() returned unexpected error: %v", err)
+					t.Logf("want: %v", expected)
+				}
+			}
+
+			err := scan(context.Background(), counter, bufferedReader, rowChan, opts)
 			if !errors.Is(err, expected) {
 				t.Errorf("Scan() returned unexpected error: %v", err)
 				t.Logf("want: %v", expected)
@@ -520,7 +583,19 @@ func BenchmarkScan(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					reader.Reset(data) // rewind to the beginning
 
-					err := scan(context.Background(), reader, rowChan, opts)
+					counter := &CountReader{Reader: reader}
+					bufferedReader := bufio.NewReaderSize(counter, 2*1024*1024)
+
+					// Skip headers if needed
+					if opts.Skip > 0 {
+						err := skipLines(bufferedReader, opts.Skip)
+						if err != nil {
+							b.Errorf("Failed to skip headers: %v", err)
+							return
+						}
+					}
+
+					err := scan(context.Background(), counter, bufferedReader, rowChan, opts)
 					if err != nil {
 						b.Errorf("Scan() returned unexpected error: %v", err)
 					}
