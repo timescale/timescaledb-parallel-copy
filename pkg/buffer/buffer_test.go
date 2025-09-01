@@ -76,15 +76,15 @@ func TestSeekPositions(t *testing.T) {
 			if strings.Contains(tt.name, "SeekCurrent") {
 				// For SeekCurrent tests, set up the expected starting position
 				if tt.name == "SeekCurrent -3" {
-					sb.Seek(9, io.SeekStart) // Start from end
+					_, _ = sb.Seek(9, io.SeekStart) // Start from end
 				} else if tt.name == "SeekCurrent -6" {
-					sb.Seek(6, io.SeekStart) // Start from position 6
+					_, _ = sb.Seek(6, io.SeekStart) // Start from position 6
 				}
 			}
-			
+
 			pos, err := sb.Seek(tt.offset, tt.whence)
 			if pos != tt.expected || err != nil {
-				t.Errorf("Seek(%d, %d) = (%d, %v), want (%d, nil)", 
+				t.Errorf("Seek(%d, %d) = (%d, %v), want (%d, nil)",
 					tt.offset, tt.whence, pos, err, tt.expected)
 			}
 
@@ -146,7 +146,7 @@ func TestWriteTo(t *testing.T) {
 	}
 
 	// Test WriteTo after seek
-	sb.Seek(6, io.SeekStart) // Start from "world"
+	_, _ = sb.Seek(6, io.SeekStart) // Start from "world"
 	buf.Reset()
 	n, err = sb.WriteTo(&buf)
 	if n != 5 || err != nil {
@@ -169,7 +169,7 @@ func TestPartialReads(t *testing.T) {
 	// Test reading in small chunks
 	result := ""
 	buf := make([]byte, 3)
-	
+
 	for {
 		n, err := sb.Read(buf)
 		if n > 0 {
@@ -253,14 +253,14 @@ func TestSeekBoundaries(t *testing.T) {
 	for _, pos := range positions {
 		actualPos, err := sb.Seek(pos, io.SeekStart)
 		if actualPos != pos || err != nil {
-			t.Errorf("Seek to boundary %d = (%d, %v), want (%d, nil)", 
+			t.Errorf("Seek to boundary %d = (%d, %v), want (%d, nil)",
 				pos, actualPos, err, pos)
 		}
 
 		// Verify we can read from this position
 		buf := make([]byte, 1)
 		n, err := sb.Read(buf)
-		
+
 		if pos == 9 { // At end
 			if n != 0 || err != io.EOF {
 				t.Errorf("Read at end pos %d = (%d, %v), want (0, EOF)", pos, n, err)
@@ -276,17 +276,17 @@ func TestSeekBoundaries(t *testing.T) {
 func TestWrite(t *testing.T) {
 	// Test basic write functionality
 	sb := NewSeekable([][]byte{})
-	
+
 	n, err := sb.Write([]byte("hello"))
 	if n != 5 || err != nil {
 		t.Errorf("Write('hello') = (%d, %v), want (5, nil)", n, err)
 	}
-	
+
 	n, err = sb.Write([]byte(" world"))
 	if n != 6 || err != nil {
 		t.Errorf("Write(' world') = (%d, %v), want (6, nil)", n, err)
 	}
-	
+
 	// Test reading back the written data
 	sb.Seek(0, io.SeekStart)
 	buf := make([]byte, 20)
@@ -301,17 +301,17 @@ func TestWrite(t *testing.T) {
 
 func TestWriteString(t *testing.T) {
 	sb := NewSeekable([][]byte{})
-	
+
 	n, err := sb.WriteString("test")
 	if n != 4 || err != nil {
 		t.Errorf("WriteString('test') = (%d, %v), want (4, nil)", n, err)
 	}
-	
+
 	n, err = sb.WriteString(" string")
 	if n != 7 || err != nil {
 		t.Errorf("WriteString(' string') = (%d, %v), want (7, nil)", n, err)
 	}
-	
+
 	// Test reading back
 	sb.Seek(0, io.SeekStart)
 	buf := make([]byte, 20)
@@ -327,11 +327,11 @@ func TestWriteString(t *testing.T) {
 func TestWriteAndSeek(t *testing.T) {
 	// Test writing data, seeking, and reading from different positions
 	sb := NewSeekable([][]byte{})
-	
-	sb.Write([]byte("abc"))
-	sb.Write([]byte("def"))
-	sb.Write([]byte("ghi"))
-	
+
+	_, _ = sb.Write([]byte("abc"))
+	_, _ = sb.Write([]byte("def"))
+	_, _ = sb.Write([]byte("ghi"))
+
 	// Test reading from beginning
 	sb.Seek(0, io.SeekStart)
 	buf := make([]byte, 3)
@@ -342,7 +342,7 @@ func TestWriteAndSeek(t *testing.T) {
 	if string(buf) != "abc" {
 		t.Errorf("Read data = %q, want %q", string(buf), "abc")
 	}
-	
+
 	// Test reading from middle
 	sb.Seek(3, io.SeekStart)
 	n, err = sb.Read(buf)
@@ -352,7 +352,7 @@ func TestWriteAndSeek(t *testing.T) {
 	if string(buf) != "def" {
 		t.Errorf("Read data = %q, want %q", string(buf), "def")
 	}
-	
+
 	// Test reading from end
 	sb.Seek(6, io.SeekStart)
 	n, err = sb.Read(buf)
@@ -366,19 +366,19 @@ func TestWriteAndSeek(t *testing.T) {
 
 func TestWriteEmpty(t *testing.T) {
 	sb := NewSeekable([][]byte{})
-	
+
 	// Test writing empty slice
 	n, err := sb.Write([]byte{})
 	if n != 0 || err != nil {
 		t.Errorf("Write([]) = (%d, %v), want (0, nil)", n, err)
 	}
-	
+
 	// Test writing nil slice
 	n, err = sb.Write(nil)
 	if n != 0 || err != nil {
 		t.Errorf("Write(nil) = (%d, %v), want (0, nil)", n, err)
 	}
-	
+
 	// Buffer should still be empty
 	buf := make([]byte, 10)
 	n, err = sb.Read(buf)
@@ -393,13 +393,13 @@ func TestMixedWriteAndInitialData(t *testing.T) {
 		[]byte("initial"),
 		[]byte(" data"),
 	}
-	
+
 	sb := NewSeekable(initialData)
-	
+
 	// Write additional data
 	sb.Write([]byte(" plus"))
 	sb.Write([]byte(" more"))
-	
+
 	// Read everything
 	sb.Seek(0, io.SeekStart)
 	buf := make([]byte, 30)
@@ -407,7 +407,7 @@ func TestMixedWriteAndInitialData(t *testing.T) {
 	if err != nil && err != io.EOF {
 		t.Errorf("Read error: %v", err)
 	}
-	
+
 	expected := "initial data plus more"
 	if string(buf[:n]) != expected {
 		t.Errorf("Read data = %q, want %q", string(buf[:n]), expected)

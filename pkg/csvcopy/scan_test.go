@@ -378,7 +378,7 @@ d"
 				for buf := range rowChan {
 					assert.EqualValues(t, c.expectedRowCount[i], buf.Location.RowCount, "on batch %d", i)
 					// Read all data from the Seekable buffer
-					buf.data.Seek(0, io.SeekStart)
+					_, _ = buf.data.Seek(0, io.SeekStart)
 					data, _ := io.ReadAll(buf.data)
 					actual = append(actual, string(data))
 					i++

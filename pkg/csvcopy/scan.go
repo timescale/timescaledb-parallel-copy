@@ -58,7 +58,7 @@ func newBatchFromReader(r io.Reader) Batch {
 
 		b.Location.ByteLen += n
 		// Process the data read from the buffer
-		b.data.Write(buf[:n])
+		_, _ = b.data.Write(buf[:n]) // Write cannot fail, just exists to meet Writer interface
 	}
 
 	return b
@@ -197,9 +197,8 @@ func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out c
 			}
 
 			finishedRow = false
-			// ReadSlice doesn't make a copy of the data; to avoid an overwrite
-			// on the next call, we need to make one now.
-			bufs.Write(data)
+
+			_, _ = bufs.Write(data) // Write cannot fail, just exists to meet Writer interface
 
 			// Figure out whether we're still inside a quoted value, in which
 			// case the row hasn't ended yet even if we're at the end of a line.
