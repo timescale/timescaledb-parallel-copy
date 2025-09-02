@@ -28,13 +28,13 @@ type scanOptions struct {
 
 // Batch represents an operation to copy data into the DB
 type Batch struct {
-	data     *buffer.Seekable
+	Data     *buffer.Seekable
 	Location Location
 }
 
 func newBatch(data *buffer.Seekable, location Location) Batch {
 	b := Batch{
-		data:     data,
+		Data:     data,
 		Location: location,
 	}
 	return b
@@ -43,7 +43,7 @@ func newBatch(data *buffer.Seekable, location Location) Batch {
 // newBatchFromReader used for testing purposes
 func newBatchFromReader(r io.Reader) Batch {
 	b := Batch{
-		data: buffer.NewSeekable([][]byte{}),
+		Data: buffer.NewSeekable([][]byte{}),
 	}
 	buf := make([]byte, 32*1024)
 
@@ -58,7 +58,7 @@ func newBatchFromReader(r io.Reader) Batch {
 
 		b.Location.ByteLen += n
 		// Process the data read from the buffer
-		_, _ = b.data.Write(buf[:n]) // Write cannot fail, just exists to meet Writer interface
+		_, _ = b.Data.Write(buf[:n]) // Write cannot fail, just exists to meet Writer interface
 	}
 
 	return b
