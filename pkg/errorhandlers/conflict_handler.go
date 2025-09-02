@@ -17,7 +17,7 @@ import (
 // generateRandomTableSuffix creates a random suffix for temporary table names
 func generateRandomTableSuffix() string {
 	bytes := make([]byte, 6) // 6 bytes = 12 hex characters
-	rand.Read(bytes)
+	_, _ = rand.Read(bytes)
 	return hex.EncodeToString(bytes)
 }
 

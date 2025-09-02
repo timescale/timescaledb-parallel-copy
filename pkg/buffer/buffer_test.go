@@ -412,8 +412,8 @@ func TestMixedWriteAndInitialData(t *testing.T) {
 	sb := NewSeekable(initialData)
 
 	// Write additional data
-	sb.Write([]byte(" plus"))
-	sb.Write([]byte(" more"))
+	_, _ = sb.Write([]byte(" plus"))
+	_, _ = sb.Write([]byte(" more"))
 
 	// Read everything
 	_, err := sb.Seek(0, io.SeekStart)

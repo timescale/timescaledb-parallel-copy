@@ -535,7 +535,7 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 	if err != nil {
 		return HandleCopyErrorResult{}, fmt.Errorf("failed to start transaction, %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var failHandlerError *BatchError
 	// If failHandler is defined, attempt to handle the error
