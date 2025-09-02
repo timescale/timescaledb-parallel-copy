@@ -288,7 +288,10 @@ func TestWrite(t *testing.T) {
 	}
 
 	// Test reading back the written data
-	sb.Seek(0, io.SeekStart)
+	_, err = sb.Seek(0, io.SeekStart)
+	if err != nil {
+		t.Errorf("Seek to start failed: %v", err)
+	}
 	buf := make([]byte, 20)
 	n, err = sb.Read(buf)
 	if n != 11 || (err != nil && err != io.EOF) {
@@ -313,7 +316,10 @@ func TestWriteString(t *testing.T) {
 	}
 
 	// Test reading back
-	sb.Seek(0, io.SeekStart)
+	_, err = sb.Seek(0, io.SeekStart)
+	if err != nil {
+		t.Errorf("Seek to start failed: %v", err)
+	}
 	buf := make([]byte, 20)
 	n, err = sb.Read(buf)
 	if n != 11 || (err != nil && err != io.EOF) {
@@ -333,7 +339,10 @@ func TestWriteAndSeek(t *testing.T) {
 	_, _ = sb.Write([]byte("ghi"))
 
 	// Test reading from beginning
-	sb.Seek(0, io.SeekStart)
+	_, err := sb.Seek(0, io.SeekStart)
+	if err != nil {
+		t.Errorf("Seek to start failed: %v", err)
+	}
 	buf := make([]byte, 3)
 	n, err := sb.Read(buf)
 	if n != 3 || err != nil {
@@ -344,7 +353,10 @@ func TestWriteAndSeek(t *testing.T) {
 	}
 
 	// Test reading from middle
-	sb.Seek(3, io.SeekStart)
+	_, err = sb.Seek(3, io.SeekStart)
+	if err != nil {
+		t.Errorf("Seek to start failed: %v", err)
+	}
 	n, err = sb.Read(buf)
 	if n != 3 || err != nil {
 		t.Errorf("Read from middle = (%d, %v), want (3, nil)", n, err)
@@ -354,7 +366,10 @@ func TestWriteAndSeek(t *testing.T) {
 	}
 
 	// Test reading from end
-	sb.Seek(6, io.SeekStart)
+	_, err = sb.Seek(6, io.SeekStart)
+	if err != nil {
+		t.Errorf("Seek to start failed: %v", err)
+	}
 	n, err = sb.Read(buf)
 	if n != 3 || (err != nil && err != io.EOF) {
 		t.Errorf("Read from end = (%d, %v), want (3, nil or EOF)", n, err)
@@ -401,7 +416,10 @@ func TestMixedWriteAndInitialData(t *testing.T) {
 	sb.Write([]byte(" more"))
 
 	// Read everything
-	sb.Seek(0, io.SeekStart)
+	_, err := sb.Seek(0, io.SeekStart)
+	if err != nil {
+		t.Errorf("Seek to start failed: %v", err)
+	}
 	buf := make([]byte, 30)
 	n, err := sb.Read(buf)
 	if err != nil && err != io.EOF {
