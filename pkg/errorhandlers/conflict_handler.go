@@ -53,7 +53,7 @@ func BatchConflictHandler(next csvcopy.BatchErrorHandler) csvcopy.BatchErrorHand
 
 		// We need to create a table like the destination table
 		randomSuffix := generateRandomTableSuffix()
-		temporalTableName := fmt.Sprintf("tmp_batch_%s", randomSuffix)
+		temporalTableName := fmt.Sprintf("timescaledb_parallel_copy.tmp_batch_%s", randomSuffix)
 
 		c.Logger.Infof("Creating temporal table %s", temporalTableName)
 		_, err = db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (LIKE %s INCLUDING DEFAULTS INCLUDING CONSTRAINTS)", temporalTableName, c.GetFullTableName()))
