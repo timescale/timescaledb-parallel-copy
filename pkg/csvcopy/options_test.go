@@ -168,7 +168,6 @@ func TestOptionsMutualExclusivity(t *testing.T) {
 			errorContains: "column mapping is already set",
 		},
 
-
 		// Valid combinations that should work
 		{
 			name: "WithSkipHeader false + WithColumns should work",

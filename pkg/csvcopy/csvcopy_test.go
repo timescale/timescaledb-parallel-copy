@@ -2034,7 +2034,7 @@ func TestAtomicityAssurance(t *testing.T) {
 
 		// Perform COPY operation (this should run within the transaction)
 		copyCmd := "COPY public.test_metrics(device_id,label,value) FROM STDIN WITH DELIMITER ',' CSV"
-		_, err = copyFromLines(ctx, connx.Conn, batch.Data, copyCmd)
+		_, err = CopyFromLines(ctx, connx.Conn, batch.Data, copyCmd)
 		if err != nil {
 			return fmt.Errorf("failed to copy from lines %w", err)
 		}

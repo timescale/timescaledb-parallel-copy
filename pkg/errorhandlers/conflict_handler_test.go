@@ -1,4 +1,4 @@
-package csvcopy
+package errorhandlers
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/timescale/timescaledb-parallel-copy/pkg/csvcopy"
 )
 
 func TestBatchConflictHandler_WithUniqueConstraint(t *testing.T) {
@@ -77,11 +78,11 @@ func TestBatchConflictHandler_WithUniqueConstraint(t *testing.T) {
 	writer.Flush()
 
 	// Test with BatchConflictHandler - should handle conflicts gracefully
-	copier, err := NewCopier(connStr, "test_metrics",
-		WithColumns("device_id,label,value"),
-		WithBatchSize(2),
-		WithBatchErrorHandler(BatchConflictHandler(BatchHandlerNoop())),
-		WithImportID("test-conflict-handling"),
+	copier, err := csvcopy.NewCopier(connStr, "test_metrics",
+		csvcopy.WithColumns("device_id,label,value"),
+		csvcopy.WithBatchSize(2),
+		csvcopy.WithBatchErrorHandler(BatchConflictHandler(csvcopy.BatchHandlerNoop())),
+		csvcopy.WithImportID("test-conflict-handling"),
 	)
 	require.NoError(t, err)
 
@@ -201,10 +202,10 @@ func TestBatchConflictHandler_WithoutBatchConflictHandler(t *testing.T) {
 	writer.Flush()
 
 	// Test without BatchConflictHandler - should fail on unique constraint violation
-	copier, err := NewCopier(connStr, "test_metrics",
-		WithColumns("device_id,label,value"),
-		WithBatchSize(2),
-		WithImportID("test-no-conflict-handling"),
+	copier, err := csvcopy.NewCopier(connStr, "test_metrics",
+		csvcopy.WithColumns("device_id,label,value"),
+		csvcopy.WithBatchSize(2),
+		csvcopy.WithImportID("test-no-conflict-handling"),
 	)
 	require.NoError(t, err)
 

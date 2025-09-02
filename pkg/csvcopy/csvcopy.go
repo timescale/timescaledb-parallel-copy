@@ -407,7 +407,7 @@ func (e ErrAtRow) Unwrap() error {
 	return e.Err
 }
 
-func (c *Copier) copyCmd() string {
+func (c *Copier) CopyCmd() string {
 	delimStr := "'" + c.splitCharacter + "'"
 	if c.splitCharacter == TAB_CHAR_STR {
 		delimStr = "E" + delimStr
@@ -438,7 +438,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) 
 	}
 	defer dbx.Close()
 
-	copyCmd := c.copyCmd()
+	copyCmd := c.CopyCmd()
 	c.Logger.Infof("Copy command: %s", copyCmd)
 
 	for {
