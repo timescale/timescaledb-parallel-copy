@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/timescale/timescaledb-parallel-copy/pkg/csvcopy"
+	"github.com/timescale/timescaledb-parallel-copy/pkg/errorhandlers"
 )
 
 const (
@@ -55,6 +56,9 @@ var (
 	verbose         bool
 	showVersion     bool
 
+	onConflictDoNothing bool
+	onConflictFunction  string
+
 	dbName string
 )
 
@@ -92,6 +96,9 @@ func init() {
 	flag.DurationVar(&reportingPeriod, "reporting-period", 0*time.Second, "Period to report insert stats; if 0s, intermediate results will not be reported")
 	flag.BoolVar(&verbose, "verbose", false, "Print more information about copying statistics")
 
+	flag.BoolVar(&onConflictDoNothing, "on-conflict-do-nothing", false, "Skip duplicate rows on unique constraint violations")
+	flag.StringVar(&onConflictFunction, "on-conflict-function", "", "PostgreSQL function name for custom conflict resolution")
+
 	flag.BoolVar(&showVersion, "version", false, "Show the version of this tool")
 
 	flag.Parse()
@@ -115,6 +122,11 @@ func main() {
 
 	if headerLinesCnt != 1 {
 		log.Fatalf("Error: -header-line-count is deprecated. Use -skip-lines instead")
+	}
+
+	// Validate conflict resolution flags
+	if onConflictFunction != "" && onConflictDoNothing {
+		log.Fatalf("Error: Cannot specify both -on-conflict-function and -on-conflict-do-nothing")
 	}
 
 	logger := &csvCopierLogger{}
@@ -157,6 +169,16 @@ func main() {
 	if skipBatchErrors {
 		batchErrorHandler = csvcopy.BatchHandlerNoop()
 	}
+
+	if onConflictFunction != "" {
+		batchErrorHandler = errorhandlers.BatchConflictHandler(
+			errorhandlers.WithConflictHandlerFunctionName(onConflictFunction),
+			errorhandlers.WithConflictHandlerNext(batchErrorHandler),
+		)
+	} else if onConflictDoNothing {
+		batchErrorHandler = errorhandlers.BatchConflictHandler()
+	}
+
 	if verbose || skipBatchErrors {
 		batchErrorHandler = csvcopy.BatchHandlerLog(logger, batchErrorHandler)
 	}

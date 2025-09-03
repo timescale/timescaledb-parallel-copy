@@ -644,6 +644,14 @@ func (c *Copier) GetFullTableName() string {
 	return fmt.Sprintf(`"%s"."%s"`, c.schemaName, c.tableName)
 }
 
+func (c *Copier) GetTableName() string {
+	return c.tableName
+}
+
+func (c *Copier) GetSchemaName() string {
+	return c.schemaName
+}
+
 func (c *Copier) GetInsertedRows() int64 {
 	return atomic.LoadInt64(&c.insertedRows)
 }

@@ -21,6 +21,31 @@ func generateRandomTableSuffix() string {
 	return hex.EncodeToString(bytes)
 }
 
+// ConflictHandlerConfig holds configuration for BatchConflictHandler
+type ConflictHandlerConfig struct {
+	CustomFunctionName string
+	Next               csvcopy.BatchErrorHandler
+}
+
+// ConflictHandlerOption allows configuring the conflict handler
+type ConflictHandlerOption func(*ConflictHandlerConfig)
+
+// WithConflictHandlerFunctionName sets a custom function name for conflict resolution
+// The function should exist in the destination table's schema and have the signature:
+// function_name(dest_schema text, dest_table text, temp_schema text, temp_table text) RETURNS bigint
+func WithConflictHandlerFunctionName(functionName string) ConflictHandlerOption {
+	return func(config *ConflictHandlerConfig) {
+		config.CustomFunctionName = functionName
+	}
+}
+
+// WithConflictHandlerNext sets the next batch error handler
+func WithConflictHandlerNext(next csvcopy.BatchErrorHandler) ConflictHandlerOption {
+	return func(config *ConflictHandlerConfig) {
+		config.Next = next
+	}
+}
+
 // BatchConflictHandler handles unique constraint violations during batch processing
 // by creating temporary tables and using ON CONFLICT DO NOTHING to skip duplicates.
 // This allows CSV imports to continue processing even when duplicate rows are encountered.
@@ -29,20 +54,31 @@ func generateRandomTableSuffix() string {
 // 1. Detecting PostgreSQL unique constraint violations (error code 23505)
 // 2. Creating a temporary table with the same structure as the destination
 // 3. Copying the batch data to the temporary table
-// 4. Using INSERT ... ON CONFLICT DO NOTHING to transfer only non-duplicate rows
+// 4. Using INSERT ... ON CONFLICT DO NOTHING to transfer only non-duplicate rows (or custom function if specified)
 // 5. Cleaning up the temporary table
 //
 // If next is provided, non-unique-constraint errors are forwarded to it.
-func BatchConflictHandler(next csvcopy.BatchErrorHandler) csvcopy.BatchErrorHandler {
+// Options can be provided to customize conflict resolution behavior.
+func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHandler {
+	config := &ConflictHandlerConfig{}
+	for _, option := range options {
+		option(config)
+	}
 	const UniqueViolationError = "23505"
 
 	return csvcopy.BatchErrorHandler(func(ctx context.Context, c *csvcopy.Copier, db *sqlx.Conn, batch csvcopy.Batch, reason error) *csvcopy.BatchError {
 		pgerr := &pgconn.PgError{}
 		if !errors.As(reason, &pgerr) {
-			return next(ctx, c, db, batch, reason)
+			if config.Next != nil {
+				return config.Next(ctx, c, db, batch, reason)
+			}
+			return csvcopy.NewErrContinue(reason)
 		}
 		if pgerr.Code != UniqueViolationError {
-			return next(ctx, c, db, batch, reason)
+			if config.Next != nil {
+				return config.Next(ctx, c, db, batch, reason)
+			}
+			return csvcopy.NewErrContinue(reason)
 		}
 
 		c.Logger.Infof("Batch %d, starting at byte %d with len %d, has conflict: %s", batch.Location.StartRow, batch.Location.ByteOffset, batch.Location.ByteLen, reason.Error())
@@ -70,15 +106,38 @@ func BatchConflictHandler(next csvcopy.BatchErrorHandler) csvcopy.BatchErrorHand
 
 		c.Logger.Infof("Copied %d rows to temporal table %s", rows, temporalTableName)
 
-		// Transfer data from temp table to destination table with conflict resolution
-		insertSQL := fmt.Sprintf("INSERT INTO %s SELECT * FROM %s ON CONFLICT DO NOTHING", c.GetFullTableName(), temporalTableName)
-		result, err := db.ExecContext(ctx, insertSQL)
-		if err != nil {
-			return csvcopy.NewErrContinue(fmt.Errorf("failed to insert from temporal table %s to %s: %w", temporalTableName, c.GetFullTableName(), err))
+		// Check for custom function if specified
+		var insertedRows int64
+		if config.CustomFunctionName != "" {
+			exists, err := checkCustomFunctionExists(ctx, db, c.GetSchemaName(), config.CustomFunctionName)
+			if err != nil {
+				return csvcopy.NewErrContinue(fmt.Errorf("failed to check for custom conflict handler %s.%s: %w", c.GetSchemaName(), config.CustomFunctionName, err))
+			}
+			if !exists {
+				return csvcopy.NewErrContinue(fmt.Errorf("custom conflict handler %s.%s not found", c.GetSchemaName(), config.CustomFunctionName))
+			}
+
+			c.Logger.Infof("Using custom conflict handler %s.%s", c.GetSchemaName(), config.CustomFunctionName)
+			// Parse temp table name to extract schema and table parts
+			tempParts := strings.SplitN(temporalTableName, ".", 2)
+			tempSchema := tempParts[0]
+			tempTable := tempParts[1]
+
+			insertedRows, err = callCustomConflictHandler(ctx, db, c.GetSchemaName(), config.CustomFunctionName, c.GetSchemaName(), c.GetTableName(), tempSchema, tempTable)
+			if err != nil {
+				return csvcopy.NewErrContinue(fmt.Errorf("custom conflict handler %s.%s failed: %w", c.GetSchemaName(), config.CustomFunctionName, err))
+			}
+		} else {
+			// Default behavior: INSERT ... ON CONFLICT DO NOTHING
+			insertSQL := fmt.Sprintf("INSERT INTO %s SELECT * FROM %s ON CONFLICT DO NOTHING", c.GetFullTableName(), temporalTableName)
+			result, err := db.ExecContext(ctx, insertSQL)
+			if err != nil {
+				return csvcopy.NewErrContinue(fmt.Errorf("failed to insert from temporal table %s to %s: %w", temporalTableName, c.GetFullTableName(), err))
+			}
+			insertedRows, _ = result.RowsAffected()
 		}
 
-		insertedRows, _ := result.RowsAffected()
-		c.Logger.Infof("Inserted %d rows from temporal table %s to %s", insertedRows, temporalTableName, c.GetFullTableName())
+		c.Logger.Infof("Processed %d rows from temporal table %s to %s", insertedRows, temporalTableName, c.GetFullTableName())
 
 		// We need to drop temporal table
 		c.Logger.Infof("Dropping temporal table %s", temporalTableName)
@@ -94,4 +153,25 @@ func BatchConflictHandler(next csvcopy.BatchErrorHandler) csvcopy.BatchErrorHand
 			Handled:      true,
 		}
 	})
+}
+
+// checkCustomFunctionExists checks if a custom conflict handler function exists in the specified schema
+func checkCustomFunctionExists(ctx context.Context, db *sqlx.Conn, schema, functionName string) (bool, error) {
+	var exists bool
+	query := `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_proc p
+			JOIN pg_namespace n ON p.pronamespace = n.oid
+			WHERE n.nspname = $1 AND p.proname = $2
+		)`
+	err := db.QueryRowContext(ctx, query, schema, functionName).Scan(&exists)
+	return exists, err
+}
+
+// callCustomConflictHandler calls the user-defined conflict resolution function
+func callCustomConflictHandler(ctx context.Context, db *sqlx.Conn, schema, functionName, destSchema, destTable, tempSchema, tempTable string) (int64, error) {
+	query := fmt.Sprintf(`SELECT "%s"."%s"($1, $2, $3, $4)`, schema, functionName)
+	var affectedRows int64
+	err := db.QueryRowContext(ctx, query, destSchema, destTable, tempSchema, tempTable).Scan(&affectedRows)
+	return affectedRows, err
 }
