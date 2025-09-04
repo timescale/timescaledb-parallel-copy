@@ -67,21 +67,26 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 	const UniqueViolationError = "23505"
 
 	return csvcopy.BatchErrorHandler(func(ctx context.Context, c *csvcopy.Copier, db *sqlx.Conn, batch csvcopy.Batch, reason error) *csvcopy.BatchError {
+		c.LogWithContext(ctx, "BatchConflictHandler called: batch %d, byte offset %d, len %d", batch.Location.StartRow, batch.Location.ByteOffset, batch.Location.ByteLen)
+
 		pgerr := &pgconn.PgError{}
 		if !errors.As(reason, &pgerr) {
-			if config.Next != nil {
-				return config.Next(ctx, c, db, batch, reason)
-			}
-			return csvcopy.NewErrContinue(reason)
-		}
-		if pgerr.Code != UniqueViolationError {
+			c.LogWithContext(ctx, "BatchErrorHandler: error is not PostgreSQL error. Type: %T, Error: %v", reason, reason)
 			if config.Next != nil {
 				return config.Next(ctx, c, db, batch, reason)
 			}
 			return csvcopy.NewErrContinue(reason)
 		}
 
-		c.Logger.Infof("Batch %d, starting at byte %d with len %d, has conflict: %s", batch.Location.StartRow, batch.Location.ByteOffset, batch.Location.ByteLen, reason.Error())
+		if pgerr.Code != UniqueViolationError {
+			c.LogWithContext(ctx, "BatchErrorHandler: not a unique constraint violation (code %s != %s). Forwarding to next handler.", pgerr.Code, UniqueViolationError)
+			if config.Next != nil {
+				return config.Next(ctx, c, db, batch, reason)
+			}
+			return csvcopy.NewErrContinue(reason)
+		}
+
+		c.LogWithContext(ctx, "Batch %d, starting at byte %d with len %d, has conflict: %s", batch.Location.StartRow, batch.Location.ByteOffset, batch.Location.ByteLen, reason.Error())
 		_, err := batch.Data.Seek(0, io.SeekStart)
 		if err != nil {
 			return csvcopy.NewErrContinue(fmt.Errorf("failed to seek to start of batch data, %w", err))
@@ -89,22 +94,22 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 
 		// We need to create a table like the destination table
 		randomSuffix := generateRandomTableSuffix()
-		temporalTableName := fmt.Sprintf("timescaledb_parallel_copy.tmp_batch_%s", randomSuffix)
+		temporalTableName := fmt.Sprintf("%s.tmp_batch_%s", c.GetSchemaName(), randomSuffix)
 
-		c.Logger.Infof("Creating temporal table %s", temporalTableName)
-		_, err = db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (LIKE %s INCLUDING DEFAULTS INCLUDING CONSTRAINTS)", temporalTableName, c.GetFullTableName()))
+		c.LogWithContext(ctx, "Creating temporal table %s", temporalTableName)
+		_, err = db.ExecContext(ctx, fmt.Sprintf("/* Worker-%d */ CREATE TABLE %s (LIKE %s INCLUDING DEFAULTS)", csvcopy.GetWorkerIDFromContext(ctx), temporalTableName, c.GetFullTableName()))
 		if err != nil {
 			return csvcopy.NewErrContinue(fmt.Errorf("failed to create temporal table %s, %w", temporalTableName, err))
 		}
 
 		// Create copy command for temporary table
-		tempCopyCmd := strings.Replace(c.CopyCmd(), c.GetFullTableName(), temporalTableName, 1)
+		tempCopyCmd := strings.Replace(c.CopyCmdWithContext(ctx), c.GetFullTableName(), temporalTableName, 1)
 		rows, err := csvcopy.CopyFromLines(ctx, db.Conn, batch.Data, tempCopyCmd)
 		if err != nil {
 			return csvcopy.NewErrContinue(fmt.Errorf("failed to copy from lines %w", err))
 		}
 
-		c.Logger.Infof("Copied %d rows to temporal table %s", rows, temporalTableName)
+		c.LogWithContext(ctx, "Copied %d rows to temporal table %s", rows, temporalTableName)
 
 		// Check for custom function if specified
 		var insertedRows int64
@@ -117,7 +122,7 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 				return csvcopy.NewErrContinue(fmt.Errorf("custom conflict handler %s.%s not found", c.GetSchemaName(), config.CustomFunctionName))
 			}
 
-			c.Logger.Infof("Using custom conflict handler %s.%s", c.GetSchemaName(), config.CustomFunctionName)
+			c.LogWithContext(ctx, "Using custom conflict handler %s.%s", c.GetSchemaName(), config.CustomFunctionName)
 			// Parse temp table name to extract schema and table parts
 			tempParts := strings.SplitN(temporalTableName, ".", 2)
 			tempSchema := tempParts[0]
@@ -129,7 +134,7 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 			}
 		} else {
 			// Default behavior: INSERT ... ON CONFLICT DO NOTHING
-			insertSQL := fmt.Sprintf("INSERT INTO %s SELECT * FROM %s ON CONFLICT DO NOTHING", c.GetFullTableName(), temporalTableName)
+			insertSQL := fmt.Sprintf("/* Worker-%d */ INSERT INTO %s SELECT * FROM %s ON CONFLICT DO NOTHING", csvcopy.GetWorkerIDFromContext(ctx), c.GetFullTableName(), temporalTableName)
 			result, err := db.ExecContext(ctx, insertSQL)
 			if err != nil {
 				return csvcopy.NewErrContinue(fmt.Errorf("failed to insert from temporal table %s to %s: %w", temporalTableName, c.GetFullTableName(), err))
@@ -137,10 +142,10 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 			insertedRows, _ = result.RowsAffected()
 		}
 
-		c.Logger.Infof("Processed %d rows from temporal table %s to %s", insertedRows, temporalTableName, c.GetFullTableName())
+		c.LogWithContext(ctx, "Processed %d rows from temporal table %s to %s", insertedRows, temporalTableName, c.GetFullTableName())
 
 		// We need to drop temporal table
-		c.Logger.Infof("Dropping temporal table %s", temporalTableName)
+		c.LogWithContext(ctx, "Dropping temporal table %s", temporalTableName)
 		_, err = db.ExecContext(ctx, fmt.Sprintf("DROP TABLE %s", temporalTableName))
 		if err != nil {
 			return csvcopy.NewErrContinue(fmt.Errorf("failed to drop temporal table %s, %w", temporalTableName, err))
@@ -170,7 +175,7 @@ func checkCustomFunctionExists(ctx context.Context, db *sqlx.Conn, schema, funct
 
 // callCustomConflictHandler calls the user-defined conflict resolution function
 func callCustomConflictHandler(ctx context.Context, db *sqlx.Conn, schema, functionName, destSchema, destTable, tempSchema, tempTable string) (int64, error) {
-	query := fmt.Sprintf(`SELECT "%s"."%s"($1, $2, $3, $4)`, schema, functionName)
+	query := fmt.Sprintf(`/* Worker-%d */ SELECT "%s"."%s"($1, $2, $3, $4)`, csvcopy.GetWorkerIDFromContext(ctx), schema, functionName)
 	var affectedRows int64
 	err := db.QueryRowContext(ctx, query, destSchema, destTable, tempSchema, tempTable).Scan(&affectedRows)
 	return affectedRows, err

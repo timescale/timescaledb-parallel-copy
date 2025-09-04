@@ -20,6 +20,24 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+// contextKey is used for context values to avoid collisions
+type contextKey string
+
+const workerIDKey contextKey = "workerID"
+
+// WithWorkerID adds a worker ID to the context
+func WithWorkerID(ctx context.Context, workerID int) context.Context {
+	return context.WithValue(ctx, workerIDKey, workerID)
+}
+
+// GetWorkerIDFromContext extracts the worker ID from context, returns -1 if not found
+func GetWorkerIDFromContext(ctx context.Context) int {
+	if workerID, ok := ctx.Value(workerIDKey).(int); ok {
+		return workerID
+	}
+	return -1
+}
+
 const TAB_CHAR_STR = "\\t"
 
 type HeaderHandling int
@@ -78,6 +96,15 @@ type Copier struct {
 	totalRows int64
 
 	failHandler BatchErrorHandler
+}
+
+// LogWithContext logs a message with worker ID extracted from context if available
+func (c *Copier) LogWithContext(ctx context.Context, msg string, args ...interface{}) {
+	if workerID := GetWorkerIDFromContext(ctx); workerID >= 0 {
+		c.Logger.Infof("[WORKER-%d] "+msg, append([]interface{}{workerID}, args...)...)
+	} else {
+		c.Logger.Infof(msg, args...)
+	}
 }
 
 func NewCopier(
@@ -194,12 +221,16 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		workerWg.Add(1)
 		go func(i int) {
 			defer workerWg.Done()
-			err := c.processBatches(ctx, batchChan)
+			// Add worker ID to context for all operations in this worker
+			workerCtx := WithWorkerID(ctx, i)
+			c.LogWithContext(workerCtx, "start worker")
+			err := c.processBatches(workerCtx, batchChan, i)
 			if err != nil {
+				c.LogWithContext(workerCtx, "worker error: %v", err)
 				errCh <- err
 				cancel()
 			}
-			c.Logger.Infof("stop worker %d", i)
+			c.LogWithContext(workerCtx, "stop worker")
 		}(i)
 
 	}
@@ -243,7 +274,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 			cancel()
 		}
 		close(batchChan)
-		c.Logger.Infof("stop scan")
+		c.LogWithContext(ctx, "stop scan")
 	}()
 	workerWg.Wait()
 
@@ -408,6 +439,10 @@ func (e ErrAtRow) Unwrap() error {
 }
 
 func (c *Copier) CopyCmd() string {
+	return c.CopyCmdWithContext(context.Background())
+}
+
+func (c *Copier) CopyCmdWithContext(ctx context.Context) string {
 	delimStr := "'" + c.splitCharacter + "'"
 	if c.splitCharacter == TAB_CHAR_STR {
 		delimStr = "E" + delimStr
@@ -423,23 +458,32 @@ func (c *Copier) CopyCmd() string {
 			quotes, strings.ReplaceAll(c.escapeCharacter, "'", "''"))
 	}
 
+	var baseCmd string
 	if c.columns != "" {
-		return fmt.Sprintf("COPY %s(%s) FROM STDIN WITH DELIMITER %s %s %s", c.GetFullTableName(), c.columns, delimStr, quotes, c.copyOptions)
+		baseCmd = fmt.Sprintf("COPY %s(%s) FROM STDIN WITH DELIMITER %s %s %s", c.GetFullTableName(), c.columns, delimStr, quotes, c.copyOptions)
+	} else {
+		baseCmd = fmt.Sprintf("COPY %s FROM STDIN WITH DELIMITER %s %s %s", c.GetFullTableName(), delimStr, quotes, c.copyOptions)
 	}
-	return fmt.Sprintf("COPY %s FROM STDIN WITH DELIMITER %s %s %s", c.GetFullTableName(), delimStr, quotes, c.copyOptions)
+
+	// Add worker ID comment if available in context
+	if workerID := GetWorkerIDFromContext(ctx); workerID >= 0 {
+		baseCmd = fmt.Sprintf("/* Worker-%d */ %s", workerID, baseCmd)
+	}
+
+	return baseCmd
 }
 
 // processBatches reads batches from channel c and copies them to the target
 // server while tracking stats on the write.
-func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) {
+func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int) (err error) {
 	dbx, err := connect(c.connString)
 	if err != nil {
 		return err
 	}
 	defer dbx.Close()
 
-	copyCmd := c.CopyCmd()
-	c.Logger.Infof("Copy command: %s", copyCmd)
+	copyCmd := c.CopyCmdWithContext(ctx)
+	c.LogWithContext(ctx, "Copy command: %s", copyCmd)
 
 	for {
 		if ctx.Err() != nil {
@@ -454,11 +498,18 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) 
 			}
 			atomic.AddInt64(&c.totalRows, int64(batch.Location.RowCount))
 
+			if c.logBatches {
+				c.LogWithContext(ctx, "Processing batch %d: rows=%d, bytes=%d, byte_offset=%d",
+					batch.Location.StartRow, batch.Location.RowCount, batch.Location.ByteLen, batch.Location.ByteOffset)
+			}
+
 			start := time.Now()
 			rows, err := copyFromBatch(ctx, dbx, batch, copyCmd)
 			if err != nil {
+				c.LogWithContext(ctx, "Batch %d failed with error: %v", batch.Location.StartRow, err)
 				handleResult, handleErr := c.handleCopyError(ctx, dbx, batch, err)
 				if handleErr != nil {
+					c.LogWithContext(ctx, "Error handler failed for batch %d: %v", batch.Location.StartRow, handleErr)
 					return handleErr
 				}
 				atomic.AddInt64(&c.skippedRows, handleResult.SkippedRows)
@@ -474,7 +525,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) 
 
 			if c.logBatches {
 				took := time.Since(start)
-				fmt.Printf("[BATCH] starting at row %d, took %v, row count %d, byte len %d, row rate %f/sec\n", batch.Location.StartRow, took, batch.Location.RowCount, batch.Location.ByteLen, float64(batch.Location.RowCount)/float64(took.Seconds()))
+				c.LogWithContext(ctx, "[BATCH] starting at row %d, took %v, row count %d, byte len %d, row rate %f/sec", batch.Location.StartRow, took, batch.Location.RowCount, batch.Location.ByteLen, float64(batch.Location.RowCount)/float64(took.Seconds()))
 			}
 		}
 	}
@@ -499,7 +550,7 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 	}
 
 	if err, ok := copyErr.(*ErrBatchAlreadyProcessed); ok {
-		c.Logger.Infof("skip batch %s already processed with state %s", batch.Location, err.State.State)
+		c.LogWithContext(ctx, "skip batch %s already processed with state %s", batch.Location, err.State.State)
 		return HandleCopyErrorResult{}, nil
 	}
 
@@ -550,7 +601,7 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 		failHandlerError = NewErrStop(errAt)
 	}
 
-	c.Logger.Infof("handling error for batch %s: %#v", batch.Location, failHandlerError)
+	c.LogWithContext(ctx, "handling error for batch %s: %#v", batch.Location, failHandlerError)
 
 	tr := newTransactionAt(batch.Location)
 

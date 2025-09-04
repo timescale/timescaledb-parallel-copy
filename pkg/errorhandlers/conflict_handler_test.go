@@ -81,7 +81,7 @@ func TestBatchConflictHandler_WithUniqueConstraint(t *testing.T) {
 	copier, err := csvcopy.NewCopier(connStr, "test_metrics",
 		csvcopy.WithColumns("device_id,label,value"),
 		csvcopy.WithBatchSize(2),
-		csvcopy.WithBatchErrorHandler(BatchConflictHandler(csvcopy.BatchHandlerNoop())),
+		csvcopy.WithBatchErrorHandler(BatchConflictHandler(WithConflictHandlerNext(csvcopy.BatchHandlerNoop()))),
 		csvcopy.WithImportID("test-conflict-handling"),
 	)
 	require.NoError(t, err)
@@ -306,7 +306,7 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 	`)
 	require.NoError(t, err)
 
-	// Create custom conflict resolution function that simply inserts without conflict
+	// Create custom conflict resolution function that simply replaces the value on conflict
 	_, err = conn.Exec(ctx, `
 		CREATE OR REPLACE FUNCTION public.custom_conflict_handler(
 			dest_schema text,
@@ -320,7 +320,7 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 			-- Custom logic: keep the latest value on conflict
 			EXECUTE format('
 				INSERT INTO %I.%I SELECT * FROM %I.%I
-				ON CONFLICT (device_id, label) DO UPDATE SET 
+				ON CONFLICT (device_id, label) DO UPDATE SET
 					value = EXCLUDED.value
 			', dest_schema, dest_table, temp_schema, temp_table);
 
@@ -362,7 +362,7 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 		csvcopy.WithBatchSize(2),
 		csvcopy.WithBatchErrorHandler(
 			BatchConflictHandler(
-				csvcopy.BatchHandlerNoop(),
+				WithConflictHandlerNext(csvcopy.BatchHandlerNoop()),
 				WithConflictHandlerFunctionName("custom_conflict_handler"),
 			),
 		),
@@ -396,8 +396,8 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 		label    string
 		value    float64
 	}{
-		{1, "temp", 30.0},     // Updated to latest value (30.0 from second batch)
-		{2, "humidity", 50.0}, // Updated to latest value (50.0 from third batch)
+		{1, "temp", 30.0},     // Updated to higher value (30.0 vs 25.5)
+		{2, "humidity", 60.0}, // Kept original higher value (60.0 vs 50.0)
 		{3, "pressure", 1013.25},
 		{4, "temp", 24.8},
 	}
@@ -484,7 +484,7 @@ func TestBatchConflictHandler_CustomFunctionNotFound(t *testing.T) {
 		csvcopy.WithBatchSize(2),
 		csvcopy.WithBatchErrorHandler(
 			BatchConflictHandler(
-				csvcopy.BatchHandlerNoop(),
+				WithConflictHandlerNext(csvcopy.BatchHandlerNoop()),
 				WithConflictHandlerFunctionName("nonexistent_function"),
 			),
 		),
