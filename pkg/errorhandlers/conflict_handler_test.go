@@ -295,18 +295,19 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 	_, err = conn.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS timescaledb_parallel_copy`)
 	require.NoError(t, err)
 
-	// Create table with unique constraint
+	// Create table with unique constraint and timestamp for proper conflict resolution
 	_, err = conn.Exec(ctx, `
 		CREATE TABLE public.test_metrics (
 			device_id int,
 			label text,
 			value float8,
+			timestamp timestamptz,
 			UNIQUE(device_id, label)
 		)
 	`)
 	require.NoError(t, err)
 
-	// Create custom conflict resolution function that simply replaces the value on conflict
+	// Create custom conflict resolution function that keeps the latest value according to timestamp
 	_, err = conn.Exec(ctx, `
 		CREATE OR REPLACE FUNCTION public.custom_conflict_handler(
 			dest_schema text,
@@ -317,12 +318,21 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 		DECLARE
 			affected_rows bigint;
 		BEGIN
-			-- Custom logic: keep the latest value on conflict
+			-- Custom logic: keep the latest value based on timestamp
 			EXECUTE format('
 				INSERT INTO %I.%I SELECT * FROM %I.%I
 				ON CONFLICT (device_id, label) DO UPDATE SET
-					value = EXCLUDED.value
-			', dest_schema, dest_table, temp_schema, temp_table);
+					value = CASE 
+						WHEN EXCLUDED.timestamp > %I.%I.timestamp THEN EXCLUDED.value
+						ELSE %I.%I.value
+					END,
+					timestamp = CASE
+						WHEN EXCLUDED.timestamp > %I.%I.timestamp THEN EXCLUDED.timestamp
+						ELSE %I.%I.timestamp
+					END
+			', dest_schema, dest_table, temp_schema, temp_table,
+			   dest_schema, dest_table, dest_schema, dest_table,
+			   dest_schema, dest_table, dest_schema, dest_table);
 
 			GET DIAGNOSTICS affected_rows = ROW_COUNT;
 			RETURN affected_rows;
@@ -338,15 +348,15 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 
 	writer := csv.NewWriter(tmpfile)
 	data := [][]string{
-		// Batch 1 - will succeed
-		{"1", "temp", "25.5"},
-		{"2", "humidity", "60.0"},
-		// Batch 2 - contains conflict, should use custom function
-		{"1", "temp", "30.0"}, // Higher value - should update
-		{"3", "pressure", "1013.25"},
-		// Batch 3 - contains another conflict
-		{"2", "humidity", "50.0"}, // Lower value - should keep original
-		{"4", "temp", "24.8"},
+		// Batch 1 - initial data (older timestamps)
+		{"1", "temp", "25.5", "2023-01-01T10:00:00Z"},
+		{"2", "humidity", "60.0", "2023-01-01T10:00:00Z"},
+		// Batch 2 - contains conflict with newer timestamp
+		{"1", "temp", "30.0", "2023-01-01T11:00:00Z"}, // Newer - should update to 30.0
+		{"3", "pressure", "1013.25", "2023-01-01T10:00:00Z"},
+		// Batch 3 - contains conflict with older timestamp
+		{"2", "humidity", "50.0", "2023-01-01T09:00:00Z"}, // Older - should keep original 60.0
+		{"4", "temp", "24.8", "2023-01-01T10:00:00Z"},
 	}
 
 	for _, record := range data {
@@ -355,10 +365,9 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 	}
 	writer.Flush()
 
-	// Create verbose logger to see what's happening
 	// Test with custom conflict handler function
 	copier, err := csvcopy.NewCopier(connStr, "test_metrics",
-		csvcopy.WithColumns("device_id,label,value"),
+		csvcopy.WithColumns("device_id,label,value,timestamp"),
 		csvcopy.WithBatchSize(2),
 		csvcopy.WithBatchErrorHandler(
 			BatchConflictHandler(
@@ -386,20 +395,21 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 4, actualCount, "Should have exactly 4 unique rows in database")
 
-	// Verify custom logic: conflicts should keep latest value
-	rows, err := conn.Query(ctx, "SELECT device_id, label, value FROM public.test_metrics ORDER BY device_id, label")
+	// Verify custom logic: conflicts should keep latest value based on timestamp
+	rows, err := conn.Query(ctx, "SELECT device_id, label, value, timestamp FROM public.test_metrics ORDER BY device_id, label")
 	require.NoError(t, err)
 	defer rows.Close()
 
 	expectedRows := []struct {
-		deviceID int
-		label    string
-		value    float64
+		deviceID  int
+		label     string
+		value     float64
+		timestamp string
 	}{
-		{1, "temp", 30.0},     // Updated to higher value (30.0 vs 25.5)
-		{2, "humidity", 60.0}, // Kept original higher value (60.0 vs 50.0)
-		{3, "pressure", 1013.25},
-		{4, "temp", 24.8},
+		{1, "temp", 30.0, "2023-01-01T11:00:00Z"},     // Updated to newer value (newer timestamp)
+		{2, "humidity", 60.0, "2023-01-01T10:00:00Z"}, // Kept original (older conflict timestamp)
+		{3, "pressure", 1013.25, "2023-01-01T10:00:00Z"},
+		{4, "temp", 24.8, "2023-01-01T10:00:00Z"},
 	}
 
 	i := 0
@@ -409,14 +419,17 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 		var deviceID int
 		var label string
 		var value float64
+		var timestamp time.Time
 
-		err = rows.Scan(&deviceID, &label, &value)
+		err = rows.Scan(&deviceID, &label, &value, &timestamp)
 		require.NoError(t, err)
 
 		expected := expectedRows[i]
 		assert.Equal(t, expected.deviceID, deviceID, "Device ID mismatch at row %d", i)
 		assert.Equal(t, expected.label, label, "Label mismatch at row %d", i)
 		assert.InDelta(t, expected.value, value, 0.01, "Value mismatch at row %d", i)
+		expectedTime, _ := time.Parse(time.RFC3339, expected.timestamp)
+		assert.True(t, expectedTime.Equal(timestamp), "Timestamp mismatch at row %d: expected %v, got %v", i, expectedTime, timestamp)
 		i++
 	}
 	assert.Equal(t, len(expectedRows), i, "Should have exactly %d rows", len(expectedRows))
