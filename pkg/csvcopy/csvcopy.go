@@ -269,7 +269,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		if err := scan(ctx, counter, bufferedReader, batchChan, opts); err != nil {
+		if err := scan(ctx, c.LogWithContext, counter, bufferedReader, batchChan, opts); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
 			cancel()
 		}
@@ -499,8 +499,8 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 			atomic.AddInt64(&c.totalRows, int64(batch.Location.RowCount))
 
 			if c.logBatches {
-				c.LogWithContext(ctx, "Processing batch %d: rows=%d, bytes=%d, byte_offset=%d",
-					batch.Location.StartRow, batch.Location.RowCount, batch.Location.ByteLen, batch.Location.ByteOffset)
+				c.LogWithContext(ctx, "[BATCH] Processing starting at row %d: rows count %d, byte len %d",
+					batch.Location.StartRow, batch.Location.RowCount, batch.Location.ByteLen)
 			}
 
 			start := time.Now()
@@ -605,18 +605,17 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 
 	tr := newTransactionAt(batch.Location)
 
-	if !isTemporaryError(failHandlerError) {
+	if failHandlerError.Handled {
+		err = tr.setCompleted(ctx, tx)
+		if err != nil {
+			return HandleCopyErrorResult{}, fmt.Errorf("failed to set state to completed for batch %s, %w", batch.Location, err)
+		}
+	} else {
 		err = tr.setFailed(ctx, tx, failHandlerError.Error())
 		if err != nil {
 			if !isDuplicateKeyError(err) {
 				return HandleCopyErrorResult{}, fmt.Errorf("failed to set state to failed for batch %s, %w", batch.Location, err)
 			}
-		}
-	}
-	if failHandlerError.Handled {
-		err = tr.setCompleted(ctx, tx)
-		if err != nil {
-			return HandleCopyErrorResult{}, fmt.Errorf("failed to set state to completed for batch %s, %w", batch.Location, err)
 		}
 	}
 

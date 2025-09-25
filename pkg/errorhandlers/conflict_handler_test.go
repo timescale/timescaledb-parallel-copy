@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -287,16 +288,20 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
 	require.NoError(t, err)
 
-	conn, err := pgx.Connect(ctx, connStr)
+	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
 	require.NoError(t, err)
-	defer conn.Close(ctx)
+	defer db.Close()
+
+	connx, err := db.Connx(ctx)
+	require.NoError(t, err)
+	defer connx.Close()
 
 	// Create the timescaledb_parallel_copy schema
-	_, err = conn.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS timescaledb_parallel_copy`)
+	_, err = connx.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS timescaledb_parallel_copy`)
 	require.NoError(t, err)
 
 	// Create table with unique constraint and timestamp for proper conflict resolution
-	_, err = conn.Exec(ctx, `
+	_, err = connx.ExecContext(ctx, `
 		CREATE TABLE public.test_metrics (
 			device_id int,
 			label text,
@@ -308,21 +313,21 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create custom conflict resolution function that keeps the latest value according to timestamp
-	_, err = conn.Exec(ctx, `
+	_, err = connx.ExecContext(ctx, `
 		CREATE OR REPLACE FUNCTION public.custom_conflict_handler(
 			dest_schema text,
 			dest_table text,
-			temp_schema text,
 			temp_table text
 		) RETURNS bigint AS $$
 		DECLARE
 			affected_rows bigint;
 		BEGIN
 			-- Custom logic: keep the latest value based on timestamp
+			-- temp_table is always a temporal table (unqualified name)
 			EXECUTE format('
-				INSERT INTO %I.%I SELECT * FROM %I.%I
+				INSERT INTO %I.%I SELECT * FROM %I
 				ON CONFLICT (device_id, label) DO UPDATE SET
-					value = CASE 
+					value = CASE
 						WHEN EXCLUDED.timestamp > %I.%I.timestamp THEN EXCLUDED.value
 						ELSE %I.%I.value
 					END,
@@ -330,7 +335,7 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 						WHEN EXCLUDED.timestamp > %I.%I.timestamp THEN EXCLUDED.timestamp
 						ELSE %I.%I.timestamp
 					END
-			', dest_schema, dest_table, temp_schema, temp_table,
+			', dest_schema, dest_table, temp_table,
 			   dest_schema, dest_table, dest_schema, dest_table,
 			   dest_schema, dest_table, dest_schema, dest_table);
 
@@ -391,12 +396,12 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 
 	// Verify actual data in database - should have 4 unique combinations
 	var actualCount int
-	err = conn.QueryRow(ctx, "SELECT COUNT(*) FROM public.test_metrics").Scan(&actualCount)
+	err = connx.QueryRowxContext(ctx, "SELECT COUNT(*) FROM public.test_metrics").Scan(&actualCount)
 	require.NoError(t, err)
 	assert.Equal(t, 4, actualCount, "Should have exactly 4 unique rows in database")
 
 	// Verify custom logic: conflicts should keep latest value based on timestamp
-	rows, err := conn.Query(ctx, "SELECT device_id, label, value, timestamp FROM public.test_metrics ORDER BY device_id, label")
+	rows, err := connx.QueryxContext(ctx, "SELECT device_id, label, value, timestamp FROM public.test_metrics ORDER BY device_id, label")
 	require.NoError(t, err)
 	defer rows.Close()
 
@@ -433,6 +438,23 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 		i++
 	}
 	assert.Equal(t, len(expectedRows), i, "Should have exactly %d rows", len(expectedRows))
+
+	// Verify the transaction row
+	tr, transactionRow, err := csvcopy.LoadTransaction(ctx, connx, "test-custom-conflict-handling")
+	require.NoError(t, err)
+	assert.Equal(t, csvcopy.TransactionRowStateCompleted, transactionRow.State)
+	assert.Nil(t, transactionRow.FailureReason)
+
+	// Verify the next transaction row
+	tr, nextTransactionRow, err := tr.Next(ctx, connx)
+	require.NoError(t, err)
+	assert.Equal(t, csvcopy.TransactionRowStateCompleted, nextTransactionRow.State)
+	assert.Nil(t, nextTransactionRow.FailureReason)
+
+	tr, nextTransactionRow, err = tr.Next(ctx, connx)
+	require.NoError(t, err)
+	assert.Equal(t, csvcopy.TransactionRowStateCompleted, nextTransactionRow.State)
+	assert.Nil(t, nextTransactionRow.FailureReason)
 }
 
 func TestBatchConflictHandler_CustomFunctionNotFound(t *testing.T) {

@@ -176,7 +176,9 @@ func main() {
 			errorhandlers.WithConflictHandlerNext(batchErrorHandler),
 		)
 	} else if onConflictDoNothing {
-		batchErrorHandler = errorhandlers.BatchConflictHandler()
+		batchErrorHandler = errorhandlers.BatchConflictHandler(
+			errorhandlers.WithConflictHandlerNext(batchErrorHandler),
+		)
 	}
 
 	if verbose || skipBatchErrors {

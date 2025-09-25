@@ -112,7 +112,8 @@ func (l Location) HasImportID() bool {
 //
 // The caller is responsible for setting up the CountReader and buffered reader,
 // and for skipping any headers before calling this function.
-func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out chan<- Batch, opts scanOptions) error {
+func scan(ctx context.Context, logger func(ctx context.Context, msg string, args ...interface{}),
+	counter *CountReader, reader *bufio.Reader, out chan<- Batch, opts scanOptions) error {
 	var rowsRead int64
 
 	batchSize := 20 * 1024 * 1024 // 20 MB batch size
@@ -189,7 +190,7 @@ func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out c
 			byteEnd := counter.Total - reader.Buffered()
 			// Chunk will be bigger than ChunkByteSize if we append the current line. Let's send the data we have int he buffer
 			if byteEnd-byteStart > batchSize {
-				log.Printf("reached max batch size, sending %d rows", bufferedRows)
+				logger(ctx, "reached max batch size, sending %d rows", bufferedRows)
 				err := send(byteEndBeforeLine)
 				if err != nil {
 					return err

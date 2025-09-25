@@ -32,7 +32,7 @@ type ConflictHandlerOption func(*ConflictHandlerConfig)
 
 // WithConflictHandlerFunctionName sets a custom function name for conflict resolution
 // The function should exist in the destination table's schema and have the signature:
-// function_name(dest_schema text, dest_table text, temp_schema text, temp_table text) RETURNS bigint
+// function_name(dest_schema text, dest_table text, temp_table text) RETURNS bigint
 func WithConflictHandlerFunctionName(functionName string) ConflictHandlerOption {
 	return func(config *ConflictHandlerConfig) {
 		config.CustomFunctionName = functionName
@@ -47,18 +47,20 @@ func WithConflictHandlerNext(next csvcopy.BatchErrorHandler) ConflictHandlerOpti
 }
 
 // BatchConflictHandler handles unique constraint violations during batch processing
-// by creating temporary tables and using ON CONFLICT DO NOTHING to skip duplicates.
+// by creating temporal tables and using ON CONFLICT DO NOTHING to skip duplicates.
 // This allows CSV imports to continue processing even when duplicate rows are encountered.
 //
 // The handler works by:
 // 1. Detecting PostgreSQL unique constraint violations (error code 23505)
-// 2. Creating a temporary table with the same structure as the destination
-// 3. Copying the batch data to the temporary table
+// 2. Creating a temporal table with the same structure as the destination
+// 3. Copying the batch data to the temporal table
 // 4. Using INSERT ... ON CONFLICT DO NOTHING to transfer only non-duplicate rows (or custom function if specified)
-// 5. Cleaning up the temporary table
+// 5. Cleaning up the temporal table (automatic with PostgreSQL)
 //
 // If next is provided, non-unique-constraint errors are forwarded to it.
 // Options can be provided to customize conflict resolution behavior.
+// Custom conflict handler functions should have the signature:
+// function_name(dest_schema text, dest_table text, temp_table text) RETURNS bigint
 func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHandler {
 	config := &ConflictHandlerConfig{}
 	for _, option := range options {
@@ -92,17 +94,17 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 			return csvcopy.NewErrContinue(fmt.Errorf("failed to seek to start of batch data, %w", err))
 		}
 
-		// We need to create a table like the destination table
+		// Create a temporal table with random name (automatically cleaned up by PostgreSQL)
 		randomSuffix := generateRandomTableSuffix()
-		temporalTableName := fmt.Sprintf("%s.tmp_batch_%s", c.GetSchemaName(), randomSuffix)
+		temporalTableName := fmt.Sprintf("tmp_batch_%s", randomSuffix)
 
 		c.LogWithContext(ctx, "Creating temporal table %s", temporalTableName)
-		_, err = db.ExecContext(ctx, fmt.Sprintf("/* Worker-%d */ CREATE TABLE %s (LIKE %s INCLUDING DEFAULTS)", csvcopy.GetWorkerIDFromContext(ctx), temporalTableName, c.GetFullTableName()))
+		_, err = db.ExecContext(ctx, fmt.Sprintf("/* Worker-%d */ CREATE TEMPORARY TABLE %s (LIKE %s INCLUDING DEFAULTS)", csvcopy.GetWorkerIDFromContext(ctx), temporalTableName, c.GetFullTableName()))
 		if err != nil {
 			return csvcopy.NewErrContinue(fmt.Errorf("failed to create temporal table %s, %w", temporalTableName, err))
 		}
 
-		// Create copy command for temporary table
+		// Create copy command for temporal table
 		tempCopyCmd := strings.Replace(c.CopyCmdWithContext(ctx), c.GetFullTableName(), temporalTableName, 1)
 		rows, err := csvcopy.CopyFromLines(ctx, db.Conn, batch.Data, tempCopyCmd)
 		if err != nil {
@@ -123,12 +125,7 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 			}
 
 			c.LogWithContext(ctx, "Using custom conflict handler %s.%s", c.GetSchemaName(), config.CustomFunctionName)
-			// Parse temp table name to extract schema and table parts
-			tempParts := strings.SplitN(temporalTableName, ".", 2)
-			tempSchema := tempParts[0]
-			tempTable := tempParts[1]
-
-			insertedRows, err = callCustomConflictHandler(ctx, db, c.GetSchemaName(), config.CustomFunctionName, c.GetSchemaName(), c.GetTableName(), tempSchema, tempTable)
+			insertedRows, err = callCustomConflictHandler(ctx, db, c.GetSchemaName(), config.CustomFunctionName, c.GetSchemaName(), c.GetTableName(), temporalTableName)
 			if err != nil {
 				return csvcopy.NewErrContinue(fmt.Errorf("custom conflict handler %s.%s failed: %w", c.GetSchemaName(), config.CustomFunctionName, err))
 			}
@@ -144,12 +141,7 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 
 		c.LogWithContext(ctx, "Processed %d rows from temporal table %s to %s", insertedRows, temporalTableName, c.GetFullTableName())
 
-		// We need to drop temporal table
-		c.LogWithContext(ctx, "Dropping temporal table %s", temporalTableName)
-		_, err = db.ExecContext(ctx, fmt.Sprintf("DROP TABLE %s", temporalTableName))
-		if err != nil {
-			return csvcopy.NewErrContinue(fmt.Errorf("failed to drop temporal table %s, %w", temporalTableName, err))
-		}
+		// No need to drop temporal table - PostgreSQL automatically cleans it up
 
 		return &csvcopy.BatchError{
 			Continue:     true,
@@ -174,9 +166,9 @@ func checkCustomFunctionExists(ctx context.Context, db *sqlx.Conn, schema, funct
 }
 
 // callCustomConflictHandler calls the user-defined conflict resolution function
-func callCustomConflictHandler(ctx context.Context, db *sqlx.Conn, schema, functionName, destSchema, destTable, tempSchema, tempTable string) (int64, error) {
-	query := fmt.Sprintf(`/* Worker-%d */ SELECT "%s"."%s"($1, $2, $3, $4)`, csvcopy.GetWorkerIDFromContext(ctx), schema, functionName)
+func callCustomConflictHandler(ctx context.Context, db *sqlx.Conn, schema, functionName, destSchema, destTable, tempTable string) (int64, error) {
+	query := fmt.Sprintf(`/* Worker-%d */ SELECT "%s"."%s"($1, $2, $3)`, csvcopy.GetWorkerIDFromContext(ctx), schema, functionName)
 	var affectedRows int64
-	err := db.QueryRowContext(ctx, query, destSchema, destTable, tempSchema, tempTable).Scan(&affectedRows)
+	err := db.QueryRowContext(ctx, query, destSchema, destTable, tempTable).Scan(&affectedRows)
 	return affectedRows, err
 }
