@@ -69,11 +69,11 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 	const UniqueViolationError = "23505"
 
 	return csvcopy.BatchErrorHandler(func(ctx context.Context, c *csvcopy.Copier, db *sqlx.Conn, batch csvcopy.Batch, reason error) *csvcopy.BatchError {
-		c.LogWithContext(ctx, "BatchConflictHandler called: batch %d, byte offset %d, len %d", batch.Location.StartRow, batch.Location.ByteOffset, batch.Location.ByteLen)
+		c.LogInfo(ctx, "BatchConflictHandler called: batch %d, byte offset %d, len %d", batch.Location.StartRow, batch.Location.ByteOffset, batch.Location.ByteLen)
 
 		pgerr := &pgconn.PgError{}
 		if !errors.As(reason, &pgerr) {
-			c.LogWithContext(ctx, "BatchConflictHandler: error is not PostgreSQL error. Type: %T, Error: %v", reason, reason)
+			c.LogInfo(ctx, "BatchConflictHandler: error is not PostgreSQL error. Type: %T, Error: %v", reason, reason)
 			if config.Next != nil {
 				return config.Next(ctx, c, db, batch, reason)
 			}
@@ -81,14 +81,14 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 		}
 
 		if pgerr.Code != UniqueViolationError {
-			c.LogWithContext(ctx, "BatchConflictHandler: not a unique constraint violation (code %s != %s). Forwarding to next handler.", pgerr.Code, UniqueViolationError)
+			c.LogInfo(ctx, "BatchConflictHandler: not a unique constraint violation (code %s != %s). Forwarding to next handler.", pgerr.Code, UniqueViolationError)
 			if config.Next != nil {
 				return config.Next(ctx, c, db, batch, reason)
 			}
 			return csvcopy.NewErrContinue(reason)
 		}
 
-		c.LogWithContext(ctx, "BatchConflictHandler: Batch %d, has conflict: %s", batch.Location.StartRow, reason.Error())
+		c.LogInfo(ctx, "BatchConflictHandler: Batch %d, has conflict: %s", batch.Location.StartRow, reason.Error())
 		_, err := batch.Data.Seek(0, io.SeekStart)
 		if err != nil {
 			return csvcopy.NewErrContinue(fmt.Errorf("failed to seek to start of batch data, %w", err))
@@ -98,7 +98,7 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 		randomSuffix := generateRandomTableSuffix()
 		temporalTableName := fmt.Sprintf("tmp_batch_%s", randomSuffix)
 
-		c.LogWithContext(ctx, "BatchConflictHandler: Creating temporal table %s", temporalTableName)
+		c.LogInfo(ctx, "BatchConflictHandler: Creating temporal table %s", temporalTableName)
 		_, err = db.ExecContext(ctx, fmt.Sprintf("/* Worker-%d */ CREATE TEMPORARY TABLE %s (LIKE %s INCLUDING DEFAULTS)", csvcopy.GetWorkerIDFromContext(ctx), temporalTableName, c.GetFullTableName()))
 		if err != nil {
 			return csvcopy.NewErrContinue(fmt.Errorf("failed to create temporal table %s, %w", temporalTableName, err))
@@ -111,7 +111,7 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 			return csvcopy.NewErrContinue(fmt.Errorf("failed to copy from lines %w", err))
 		}
 
-		c.LogWithContext(ctx, "BatchConflictHandler: Copied %d rows to temporal table %s", rows, temporalTableName)
+		c.LogInfo(ctx, "BatchConflictHandler: Copied %d rows to temporal table %s", rows, temporalTableName)
 
 		// Check for custom function if specified
 		var insertedRows int64
@@ -124,7 +124,7 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 				return csvcopy.NewErrContinue(fmt.Errorf("custom conflict handler %s.%s not found", c.GetSchemaName(), config.CustomFunctionName))
 			}
 
-			c.LogWithContext(ctx, "BatchConflictHandler: Using custom conflict handler %s.%s", c.GetSchemaName(), config.CustomFunctionName)
+			c.LogInfo(ctx, "BatchConflictHandler: Using custom conflict handler %s.%s", c.GetSchemaName(), config.CustomFunctionName)
 			insertedRows, err = callCustomConflictHandler(ctx, db, c.GetSchemaName(), config.CustomFunctionName, c.GetSchemaName(), c.GetTableName(), temporalTableName)
 			if err != nil {
 				return csvcopy.NewErrContinue(fmt.Errorf("custom conflict handler %s.%s failed: %w", c.GetSchemaName(), config.CustomFunctionName, err))
@@ -139,7 +139,7 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 			insertedRows, _ = result.RowsAffected()
 		}
 
-		c.LogWithContext(ctx, "BatchConflictHandler: Processed %d rows from temporal table %s to %s", insertedRows, temporalTableName, c.GetFullTableName())
+		c.LogInfo(ctx, "BatchConflictHandler: Processed %d rows from temporal table %s to %s", insertedRows, temporalTableName, c.GetFullTableName())
 
 		// No need to drop temporal table - PostgreSQL automatically cleans it up
 
