@@ -451,7 +451,7 @@ func TestBatchConflictHandler_CustomFunction(t *testing.T) {
 	assert.Equal(t, csvcopy.TransactionRowStateCompleted, nextTransactionRow.State)
 	assert.Nil(t, nextTransactionRow.FailureReason)
 
-	tr, nextTransactionRow, err = tr.Next(ctx, connx)
+	_, nextTransactionRow, err = tr.Next(ctx, connx)
 	require.NoError(t, err)
 	assert.Equal(t, csvcopy.TransactionRowStateCompleted, nextTransactionRow.State)
 	assert.Nil(t, nextTransactionRow.FailureReason)

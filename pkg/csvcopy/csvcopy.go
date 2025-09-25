@@ -615,12 +615,13 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 
 	tr := newTransactionAt(batch.Location)
 
+	// If the fail handler is marked as handled, the transaction will be marked as completed. Independently if it still contains an error
 	if failHandlerError.Handled {
 		err = tr.setCompleted(ctx, tx)
 		if err != nil {
 			return HandleCopyErrorResult{}, fmt.Errorf("failed to set state to completed for batch %s, %w", batch.Location, err)
 		}
-	} else {
+	} else if !isTemporaryError(failHandlerError.Err) {
 		err = tr.setFailed(ctx, tx, failHandlerError.Error())
 		if err != nil {
 			if !isDuplicateKeyError(err) {
