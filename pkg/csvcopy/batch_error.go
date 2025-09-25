@@ -9,7 +9,7 @@ import (
 // BatchHandlerLog prints a log line that reports the error in the given batch
 func BatchHandlerLog(log Logger, next BatchErrorHandler) BatchErrorHandler {
 	return BatchErrorHandler(func(ctx context.Context, c *Copier, db *sqlx.Conn, batch Batch, reason error) *BatchError {
-		c.LogWithContext(ctx, "Batch %d, starting at byte %d with len %d, has error: %s", batch.Location.StartRow, batch.Location.ByteOffset, batch.Location.ByteLen, reason.Error())
+		c.LogWithContext(ctx, "BatchHandlerLog: Batch %d, starting at byte %d with len %d, has error: %s", batch.Location.StartRow, batch.Location.ByteOffset, batch.Location.ByteLen, reason.Error())
 
 		if next != nil {
 			return next(ctx, c, db, batch, reason)

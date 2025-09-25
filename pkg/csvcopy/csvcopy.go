@@ -506,7 +506,6 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 			start := time.Now()
 			rows, err := copyFromBatch(ctx, dbx, batch, copyCmd)
 			if err != nil {
-				c.LogWithContext(ctx, "Batch %d failed with error: %v", batch.Location.StartRow, err)
 				handleResult, handleErr := c.handleCopyError(ctx, dbx, batch, err)
 				if handleErr != nil {
 					c.LogWithContext(ctx, "Error handler failed for batch %d: %v", batch.Location.StartRow, handleErr)
