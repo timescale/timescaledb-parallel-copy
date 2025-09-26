@@ -215,21 +215,27 @@ func WithSchemaName(schema string) Option {
 	}
 }
 
-func NewErrContinue(err error) *BatchError {
-	return &BatchError{
-		Continue: true,
-		Err:      err,
+func NewErrContinue(err error) HandleBatchErrorResult {
+	return HandleBatchErrorResult{
+		Continue:     true,
+		Err:          err,
+		Handled:      false,
+		InsertedRows: 0,
+		SkippedRows:  0,
 	}
 }
 
-func NewErrStop(err error) *BatchError {
-	return &BatchError{
-		Continue: false,
-		Err:      err,
+func NewErrStop(err error) HandleBatchErrorResult {
+	return HandleBatchErrorResult{
+		Continue:     false,
+		Err:          err,
+		Handled:      false,
+		InsertedRows: 0,
+		SkippedRows:  0,
 	}
 }
 
-type BatchError struct {
+type HandleBatchErrorResult struct {
 	// Continue if true, The code will continue processing new batches. Otherwise, it will stop.
 	Continue bool
 	// Handled if true, It means the error was correctly handled and the resulting batch will be marked as completed
@@ -244,11 +250,11 @@ type BatchError struct {
 	Err error
 }
 
-func (err BatchError) Error() string {
+func (err HandleBatchErrorResult) Error() string {
 	return fmt.Sprintf("continue: %t, %s", err.Continue, err.Err)
 }
 
-func (err BatchError) Unwrap() error {
+func (err HandleBatchErrorResult) Unwrap() error {
 	return err.Err
 }
 
@@ -270,7 +276,7 @@ type BatchErrorHandler func(
 	batch Batch,
 	// err is the error that was returned the copy operation.
 	err error,
-) *BatchError
+) HandleBatchErrorResult
 
 // WithBatchErrorHandler specifies which fail handler implementation to use
 func WithBatchErrorHandler(handler BatchErrorHandler) Option {

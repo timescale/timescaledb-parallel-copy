@@ -68,7 +68,7 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 	}
 	const UniqueViolationError = "23505"
 
-	return csvcopy.BatchErrorHandler(func(ctx context.Context, c *csvcopy.Copier, db *sqlx.Conn, batch csvcopy.Batch, reason error) *csvcopy.BatchError {
+	return csvcopy.BatchErrorHandler(func(ctx context.Context, c *csvcopy.Copier, db *sqlx.Conn, batch csvcopy.Batch, reason error) csvcopy.HandleBatchErrorResult {
 		c.LogInfo(ctx, "BatchConflictHandler called: batch %d, byte offset %d, len %d", batch.Location.StartRow, batch.Location.ByteOffset, batch.Location.ByteLen)
 
 		pgerr := &pgconn.PgError{}
@@ -77,7 +77,7 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 			if config.Next != nil {
 				return config.Next(ctx, c, db, batch, reason)
 			}
-			return csvcopy.NewErrContinue(reason)
+			return csvcopy.NewErrStop(reason)
 		}
 
 		if pgerr.Code != UniqueViolationError {
@@ -85,13 +85,13 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 			if config.Next != nil {
 				return config.Next(ctx, c, db, batch, reason)
 			}
-			return csvcopy.NewErrContinue(reason)
+			return csvcopy.NewErrStop(reason)
 		}
 
 		c.LogInfo(ctx, "BatchConflictHandler: Batch %d, has conflict: %s", batch.Location.StartRow, reason.Error())
 		_, err := batch.Data.Seek(0, io.SeekStart)
 		if err != nil {
-			return csvcopy.NewErrContinue(fmt.Errorf("failed to seek to start of batch data, %w", err))
+			return csvcopy.NewErrStop(fmt.Errorf("failed to seek to start of batch data, %w", err))
 		}
 
 		// Create a temporal table with random name (automatically cleaned up by PostgreSQL)
@@ -101,14 +101,14 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 		c.LogInfo(ctx, "BatchConflictHandler: Creating temporal table %s", temporalTableName)
 		_, err = db.ExecContext(ctx, fmt.Sprintf("/* Worker-%d */ CREATE TEMPORARY TABLE %s (LIKE %s INCLUDING DEFAULTS)", csvcopy.GetWorkerIDFromContext(ctx), temporalTableName, c.GetFullTableName()))
 		if err != nil {
-			return csvcopy.NewErrContinue(fmt.Errorf("failed to create temporal table %s, %w", temporalTableName, err))
+			return csvcopy.NewErrStop(fmt.Errorf("failed to create temporal table %s, %w", temporalTableName, err))
 		}
 
 		// Create copy command for temporal table
 		tempCopyCmd := strings.Replace(c.CopyCmdWithContext(ctx), c.GetFullTableName(), temporalTableName, 1)
 		rows, err := csvcopy.CopyFromLines(ctx, db.Conn, batch.Data, tempCopyCmd)
 		if err != nil {
-			return csvcopy.NewErrContinue(fmt.Errorf("failed to copy from lines %w", err))
+			return csvcopy.NewErrStop(fmt.Errorf("failed to copy from lines %w", err))
 		}
 
 		c.LogInfo(ctx, "BatchConflictHandler: Copied %d rows to temporal table %s", rows, temporalTableName)
@@ -118,23 +118,23 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 		if config.CustomFunctionName != "" {
 			exists, err := checkCustomFunctionExists(ctx, db, c.GetSchemaName(), config.CustomFunctionName)
 			if err != nil {
-				return csvcopy.NewErrContinue(fmt.Errorf("failed to check for custom conflict handler %s.%s: %w", c.GetSchemaName(), config.CustomFunctionName, err))
+				return csvcopy.NewErrStop(fmt.Errorf("failed to check for custom conflict handler %s.%s: %w", c.GetSchemaName(), config.CustomFunctionName, err))
 			}
 			if !exists {
-				return csvcopy.NewErrContinue(fmt.Errorf("custom conflict handler %s.%s not found", c.GetSchemaName(), config.CustomFunctionName))
+				return csvcopy.NewErrStop(fmt.Errorf("custom conflict handler %s.%s not found", c.GetSchemaName(), config.CustomFunctionName))
 			}
 
 			c.LogInfo(ctx, "BatchConflictHandler: Using custom conflict handler %s.%s", c.GetSchemaName(), config.CustomFunctionName)
 			insertedRows, err = callCustomConflictHandler(ctx, db, c.GetSchemaName(), config.CustomFunctionName, c.GetSchemaName(), c.GetTableName(), temporalTableName)
 			if err != nil {
-				return csvcopy.NewErrContinue(fmt.Errorf("custom conflict handler %s.%s failed: %w", c.GetSchemaName(), config.CustomFunctionName, err))
+				return csvcopy.NewErrStop(fmt.Errorf("custom conflict handler %s.%s failed: %w", c.GetSchemaName(), config.CustomFunctionName, err))
 			}
 		} else {
 			// Default behavior: INSERT ... ON CONFLICT DO NOTHING
 			insertSQL := fmt.Sprintf("/* Worker-%d */ INSERT INTO %s SELECT * FROM %s ON CONFLICT DO NOTHING", csvcopy.GetWorkerIDFromContext(ctx), c.GetFullTableName(), temporalTableName)
 			result, err := db.ExecContext(ctx, insertSQL)
 			if err != nil {
-				return csvcopy.NewErrContinue(fmt.Errorf("failed to insert from temporal table %s to %s: %w", temporalTableName, c.GetFullTableName(), err))
+				return csvcopy.NewErrStop(fmt.Errorf("failed to insert from temporal table %s to %s: %w", temporalTableName, c.GetFullTableName(), err))
 			}
 			insertedRows, _ = result.RowsAffected()
 		}
@@ -143,7 +143,7 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 
 		// No need to drop temporal table - PostgreSQL automatically cleans it up
 
-		return &csvcopy.BatchError{
+		return csvcopy.HandleBatchErrorResult{
 			Continue:     true,
 			InsertedRows: insertedRows,
 			SkippedRows:  rows - insertedRows,

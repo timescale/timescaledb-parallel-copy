@@ -910,7 +910,7 @@ type MockErrorHandler struct {
 	stop   bool
 }
 
-func (fs *MockErrorHandler) HandleError(ctx context.Context, c *Copier, db *sqlx.Conn, batch Batch, reason error) *BatchError {
+func (fs *MockErrorHandler) HandleError(ctx context.Context, c *Copier, db *sqlx.Conn, batch Batch, reason error) HandleBatchErrorResult {
 	if fs.Errors == nil {
 		fs.Errors = map[int]error{}
 	}
@@ -976,7 +976,7 @@ func TestFailedBatchHandlerFailure(t *testing.T) {
 
 	writer.Flush()
 
-	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithBatchSize(2), WithBatchErrorHandler(func(_ context.Context, _ *Copier, _ *sqlx.Conn, _ Batch, err error) *BatchError {
+	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithBatchSize(2), WithBatchErrorHandler(func(_ context.Context, _ *Copier, _ *sqlx.Conn, _ Batch, err error) HandleBatchErrorResult {
 		return NewErrStop(fmt.Errorf("couldn't handle error %w", err))
 	}))
 	require.NoError(t, err)

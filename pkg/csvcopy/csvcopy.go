@@ -527,12 +527,6 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 			}
 			atomic.AddInt64(&c.insertedRows, rows)
 
-			if err, ok := err.(*ErrBatchAlreadyProcessed); ok {
-				if err.State.State == "completed" {
-					atomic.AddInt64(&c.skippedRows, int64(batch.Location.RowCount))
-				}
-			}
-
 			if c.logBatches {
 				took := time.Since(start)
 				c.LogInfo(ctx, "Processing: starting at row %d, took %v, row count %d, byte len %d, row rate %f/sec", batch.Location.StartRow, took, batch.Location.RowCount, batch.Location.ByteLen, float64(batch.Location.RowCount)/float64(took.Seconds()))
@@ -561,7 +555,17 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 
 	if err, ok := copyErr.(*ErrBatchAlreadyProcessed); ok {
 		c.LogInfo(ctx, "skip batch %s already processed with state %s", batch.Location, err.State.State)
-		return HandleCopyErrorResult{}, nil
+		if err.State.State == "completed" {
+			return HandleCopyErrorResult{
+				InsertedRows: 0,
+				SkippedRows:  int64(batch.Location.RowCount),
+			}, nil
+		}
+		return HandleCopyErrorResult{
+			InsertedRows: 0,
+			SkippedRows:  0,
+		}, nil
+
 	}
 
 	connx, err := db.Connx(ctx)
@@ -572,13 +576,13 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 
 	if !batch.Location.HasImportID() {
 		if c.failHandler == nil {
-			return HandleCopyErrorResult{}, NewErrStop(errAt)
+			return HandleCopyErrorResult{
+				InsertedRows: 0,
+				SkippedRows:  0,
+			}, errAt
 		}
 
 		failHandlerError := c.failHandler(ctx, c, connx, batch, errAt)
-		if failHandlerError == nil {
-			return HandleCopyErrorResult{}, nil
-		}
 		if !failHandlerError.Continue {
 			return HandleCopyErrorResult{
 				InsertedRows: failHandlerError.InsertedRows,
@@ -598,15 +602,10 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var failHandlerError *BatchError
+	var failHandlerError HandleBatchErrorResult
 	// If failHandler is defined, attempt to handle the error
 	if c.failHandler != nil {
 		failHandlerError = c.failHandler(ctx, c, connx, batch, errAt)
-		if failHandlerError == nil {
-			// If fail handler error does not return an error,
-			// make it so it recovers the previous error and continues execution
-			failHandlerError = NewErrContinue(errAt)
-		}
 	} else {
 		failHandlerError = NewErrStop(errAt)
 	}
