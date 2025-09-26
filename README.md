@@ -220,8 +220,6 @@ Usage of timescaledb-parallel-copy:
         Whether to time individual batches.
   -on-conflict-do-nothing
         Skip duplicate rows on unique constraint violations
-  -on-conflict-function string
-        PostgreSQL function name for custom conflict resolution
   -quote character
         The QUOTE character to use during COPY (default '"')
   -reporting-period duration
@@ -369,10 +367,6 @@ Both files can use the same mapping configuration and import successfully into t
 
 ### Conflict Resolution
 
-When importing data that may contain duplicate rows (based on unique constraints), `timescaledb-parallel-copy` provides flexible conflict resolution options to handle these situations gracefully instead of failing the import.
-
-#### Skip Duplicate Rows
-
 Use `--on-conflict-do-nothing` to automatically skip duplicate rows when unique constraint violations occur:
 
 ```bash
@@ -383,64 +377,7 @@ $ timescaledb-parallel-copy --connection $DATABASE_URL --table metrics --file da
 
 This uses PostgreSQL's `ON CONFLICT DO NOTHING` clause to ignore rows that would violate unique constraints, allowing the import to continue with just the non-duplicate data.
 
-#### Custom Conflict Resolution Functions
+Note that this statement is not allowed within a `COPY FROM`. The tool will fallback to moving your data into a temporal table and running `INSERT INTO ... SELECT * FROM ... ON CONFLICT DO NOTHING`.
 
-For more sophisticated conflict resolution (like keeping the latest value, merging data, or applying custom logic), you can specify a PostgreSQL function to handle conflicts:
+This flag is intended to detect real duplicates and not incremental changes to rows. This means it is safe to use this setting is you expect your data to have duplicate rows, but it is not ok to use this as an ingestion pipeline where you expect updates for the same unique constraint.
 
-```bash
-# Use custom function to resolve conflicts
-$ timescaledb-parallel-copy --connection $DATABASE_URL --table sensor_readings --file sensors.csv \
-    --on-conflict-function handle_sensor_conflicts
-```
-
-**Database Setup Required:**
-
-Your PostgreSQL function must be created in the destination table's schema with this exact signature:
-
-```sql
-CREATE OR REPLACE FUNCTION public.handle_sensor_conflicts(
-    dest_schema text,
-    dest_table text,
-    temp_schema text,
-    temp_table text
-) RETURNS bigint AS $$
-DECLARE
-    affected_rows bigint;
-BEGIN
-    -- Your custom conflict resolution logic here
-    EXECUTE format('
-        INSERT INTO %I.%I SELECT * FROM %I.%I
-        ON CONFLICT (device_id, metric_name) DO UPDATE SET
-            value = EXCLUDED.value,
-            timestamp = EXCLUDED.timestamp
-    ', dest_schema, dest_table, temp_schema, temp_table);
-
-    GET DIAGNOSTICS affected_rows = ROW_COUNT;
-    RETURN affected_rows;
-END;
-$$ LANGUAGE plpgsql;
-```
-
-**Common Conflict Resolution Patterns:**
-
-**Keep Latest Value:**
-```sql
--- Replace existing values with newer ones
-ON CONFLICT (device_id, sensor_type) DO UPDATE SET
-    value = EXCLUDED.value,
-    timestamp = EXCLUDED.timestamp
-```
-
-**Keep Higher Value:**
-```sql
--- Keep the maximum value on conflict
-ON CONFLICT (device_id, metric) DO UPDATE SET
-    value = GREATEST(EXCLUDED.value, table_name.value)
-```
-
-**Aggregate Values:**
-```sql
--- Sum conflicting values (useful for counters)
-ON CONFLICT (device_id, date) DO UPDATE SET
-    total_count = table_name.total_count + EXCLUDED.total_count
-```
