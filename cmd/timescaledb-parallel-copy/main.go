@@ -57,7 +57,6 @@ var (
 	showVersion     bool
 
 	onConflictDoNothing bool
-	onConflictFunction  string
 
 	dbName string
 )
@@ -97,7 +96,6 @@ func init() {
 	flag.BoolVar(&verbose, "verbose", false, "Print more information about copying statistics")
 
 	flag.BoolVar(&onConflictDoNothing, "on-conflict-do-nothing", false, "Skip duplicate rows on unique constraint violations")
-	flag.StringVar(&onConflictFunction, "on-conflict-function", "", "PostgreSQL function name for custom conflict resolution")
 
 	flag.BoolVar(&showVersion, "version", false, "Show the version of this tool")
 
@@ -124,10 +122,6 @@ func main() {
 		log.Fatalf("Error: -header-line-count is deprecated. Use -skip-lines instead")
 	}
 
-	// Validate conflict resolution flags
-	if onConflictFunction != "" && onConflictDoNothing {
-		log.Fatalf("Error: Cannot specify both -on-conflict-function and -on-conflict-do-nothing")
-	}
 
 	logger := &csvCopierLogger{}
 
@@ -170,12 +164,7 @@ func main() {
 		batchErrorHandler = csvcopy.BatchHandlerNoop()
 	}
 
-	if onConflictFunction != "" {
-		batchErrorHandler = errorhandlers.BatchConflictHandler(
-			errorhandlers.WithConflictHandlerFunctionName(onConflictFunction),
-			errorhandlers.WithConflictHandlerNext(batchErrorHandler),
-		)
-	} else if onConflictDoNothing {
+	if onConflictDoNothing {
 		batchErrorHandler = errorhandlers.BatchConflictHandler(
 			errorhandlers.WithConflictHandlerNext(batchErrorHandler),
 		)
