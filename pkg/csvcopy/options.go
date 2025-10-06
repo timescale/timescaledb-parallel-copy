@@ -147,6 +147,18 @@ func WithWorkers(workers int) Option {
 	}
 }
 
+// WithQueueSize sets the size of the channel used to transfer batches from the producer to workers.
+// The default queue size is 2 * workers.
+func WithQueueSize(queueSize int) Option {
+	return func(c *Copier) error {
+		if queueSize <= 0 {
+			return errors.New("queueSize must be greater than zero")
+		}
+		c.queueSize = queueSize
+		return nil
+	}
+}
+
 // WithLimit limits the number of imported rows
 func WithLimit(limit int64) Option {
 	return func(c *Copier) error {

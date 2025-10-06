@@ -74,6 +74,7 @@ type Copier struct {
 	escapeCharacter   string
 	columns           string
 	workers           int
+	queueSize        int
 	limit             int64
 	bufferSize        int
 	batchByteSize     int
@@ -136,6 +137,7 @@ func NewCopier(
 		escapeCharacter:   "",
 		columns:           "",
 		workers:           1,
+		queueSize:         0,
 		limit:             0,
 		bufferSize:        10 * 1024 * 1024,
 		batchByteSize:     50 * 1024 * 1024,
@@ -220,8 +222,13 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		}
 	}
 
+	queueSize := c.workers * 2
+	if c.queueSize > 0 {
+		queueSize = c.queueSize
+	}
+
 	var workerWg sync.WaitGroup
-	batchChan := make(chan Batch, c.workers*2)
+	batchChan := make(chan Batch, queueSize)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

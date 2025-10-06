@@ -3,6 +3,8 @@ package csvcopy
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestOptionsMutualExclusivity(t *testing.T) {
@@ -376,3 +378,14 @@ func TestSkipHeaderCountValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestQueueSizeSetsQueueSize(t *testing.T) {
+	copier, err := NewCopier("connstr", "table", WithQueueSize(2))
+	require.NoError(t, err)
+	require.Equal(t, 2, copier.queueSize)
+
+	copier, err = NewCopier("connstr", "table")
+	require.NoError(t, err)
+	require.Equal(t, 0, copier.queueSize)
+}
+
