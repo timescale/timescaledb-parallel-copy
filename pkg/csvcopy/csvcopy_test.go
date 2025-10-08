@@ -1996,33 +1996,55 @@ func setupTable(ctx context.Context, b *testing.B, connStr string) {
 	defer connx.Close()
 
 	_, err = connx.ExecContext(ctx, "drop table if exists public.sensor_readings")
-	_, err = connx.ExecContext(ctx, "create table public.sensor_readings (timestamp timestamptz, device_id int, v1 float8, v2 float8)")
+	colsToGenerate, err := strconv.ParseInt(os.Getenv("TEST_DATASET_ROW_WIDTH"), 10, 64)
+	colString := ""
+	for i := range colsToGenerate {
+		colString += fmt.Sprintf(", v%d float8", i)
+	}
+	_, err = connx.ExecContext(ctx, fmt.Sprintf("create table public.sensor_readings (timestamp timestamptz, device_id int %s)", colString))
 	require.NoError(b, err)
 }
 
 func generateRows(b *testing.B) *bytes.Buffer {
 	rowsToGenerate, err := strconv.ParseInt(os.Getenv("TEST_DATASET_ROW_COUNT"), 10, 64)
+	colsToGenerate, err := strconv.ParseInt(os.Getenv("TEST_DATASET_ROW_WIDTH"), 10, 64)
 	require.NoError(b, err)
 	buf := bytes.Buffer{}
 	for i := range rowsToGenerate {
-		buf.Write([]byte(fmt.Sprintf("%s,%d,%f,%f\n", time.Now().Format(time.RFC3339), i % 1000, rand.Float64(), rand.Float64())))
+		buf.Write([]byte(fmt.Sprintf("%s,%d", time.Now().Format(time.RFC3339), i % 1000)))
+		for range colsToGenerate {
+			buf.Write([]byte(fmt.Sprintf(",%f", rand.Float64())))
+		}
+		buf.Write([]byte("\n"))
 	}
 	return &buf
 }
 
 // BenchmarkBatchByteSize can be used to determine the optimal setting of
 // BatchByteSize for a target instance. It tries various combinations of
-// batch sizes from 16KiB to 16MiB
+// batch sizes from 16KiB to 16MiB.
 func BenchmarkBatchByteSize(b *testing.B) {
 	ctx := context.Background()
 	kb := 1024
 	batchSizesInKb := []int{/*1, 2, 4, 8, */16,  64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384}
-	workerSizes := []int{1, 2, 4, 8}
+	workerSizes := []int{/*1, 2, 4,*/ 8}
 
 	rows := generateRows(b).Bytes()
 	reader := bytes.NewReader(rows)
 
 	connStr := setupDatabase(ctx, b)
+
+	testDataSetRowWidth := os.Getenv("TEST_DATASET_ROW_WIDTH")
+	colsToGenerate := int64(2)
+	if testDataSetRowWidth != "" {
+		var err error
+		colsToGenerate, err = strconv.ParseInt(testDataSetRowWidth, 10, 64)
+		require.NoError(b, err)
+	}
+	cols := ""
+	for i := range colsToGenerate {
+		cols += fmt.Sprintf(",v%d", i)
+	}
 
 	for _, workers := range workerSizes {
 		for _, size := range batchSizesInKb {
@@ -2037,7 +2059,7 @@ func BenchmarkBatchByteSize(b *testing.B) {
 					b.StopTimer()
 					setupTable(ctx, b, connStr)
 					copier, err := NewCopier(connStr, "sensor_readings",
-						WithColumns("timestamp,device_id,v1,v2"),
+						WithColumns(fmt.Sprintf("timestamp,device_id%s", cols)),
 						WithBatchSize(1000000), // set batch size _very large_ so that BatchByteSize determines batch sizes
 						WithBatchByteSize(batchByteSize),
 						WithWorkers(workers),
