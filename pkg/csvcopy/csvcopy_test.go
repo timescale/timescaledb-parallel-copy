@@ -2,10 +2,13 @@ package csvcopy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/csv"
 	"fmt"
+	"math/rand"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1950,5 +1953,109 @@ func TestColumnsMapping_Get(t *testing.T) {
 			assert.Equal(t, tt.expectedFound, found)
 			assert.Equal(t, tt.expectedColumn, column)
 		})
+	}
+}
+
+func setupDatabase(ctx context.Context, b *testing.B) string {
+	connStr := os.Getenv("TARGET_DB_URL")
+
+	if connStr == "" {
+		pgContainer, err := postgres.Run(ctx,
+			"timescale/timescaledb-ha:pg17",
+			postgres.WithDatabase("test-db"),
+			postgres.WithUsername("postgres"),
+			postgres.WithPassword("postgres"),
+			testcontainers.WithWaitStrategy(
+				wait.ForLog("database system is ready to accept connections").
+					WithOccurrence(2).WithStartupTimeout(5*time.Second)),
+		)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		b.Cleanup(func() {
+			if err := pgContainer.Terminate(ctx); err != nil {
+				b.Fatalf("failed to terminate pgContainer: %s", err)
+			}
+		})
+		connStr, err = pgContainer.ConnectionString(ctx, "sslmode=disable")
+		require.NoError(b, err)
+	}
+	setupTable(ctx, b, connStr)
+
+	return connStr
+}
+
+func setupTable(ctx context.Context, b *testing.B, connStr string) {
+	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
+	require.NoError(b, err)
+	defer db.Close()
+
+	connx, err := db.Connx(ctx)
+	require.NoError(b, err)
+	defer connx.Close()
+
+	_, err = connx.ExecContext(ctx, "drop table if exists public.sensor_readings")
+	_, err = connx.ExecContext(ctx, "create table public.sensor_readings (timestamp timestamptz, device_id int, v1 float8, v2 float8)")
+	require.NoError(b, err)
+}
+
+func generateRows(b *testing.B) *bytes.Buffer {
+	rowsToGenerate, err := strconv.ParseInt(os.Getenv("TEST_DATASET_ROW_COUNT"), 10, 64)
+	require.NoError(b, err)
+	buf := bytes.Buffer{}
+	for i := range rowsToGenerate {
+		buf.Write([]byte(fmt.Sprintf("%s,%d,%f,%f\n", time.Now().Format(time.RFC3339), i % 1000, rand.Float64(), rand.Float64())))
+	}
+	return &buf
+}
+
+// BenchmarkBatchByteSize can be used to determine the optimal setting of
+// BatchByteSize for a target instance. It tries various combinations of
+// batch sizes from 16KiB to 16MiB
+func BenchmarkBatchByteSize(b *testing.B) {
+	ctx := context.Background()
+	kb := 1024
+	batchSizesInKb := []int{/*1, 2, 4, 8, */16,  64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384}
+	workerSizes := []int{1, 2, 4, 8}
+
+	rows := generateRows(b).Bytes()
+	reader := bytes.NewReader(rows)
+
+	connStr := setupDatabase(ctx, b)
+
+	for _, workers := range workerSizes {
+		for _, size := range batchSizesInKb {
+			b.Run(fmt.Sprintf("BatchSize-%dworker-%dKiB", workers, size), func(b *testing.B) {
+				batchByteSize := size * kb
+				var r Result
+
+				total := int64(0)
+
+				b.ResetTimer()
+				for range b.N {
+					b.StopTimer()
+					setupTable(ctx, b, connStr)
+					copier, err := NewCopier(connStr, "sensor_readings",
+						WithColumns("timestamp,device_id,v1,v2"),
+						WithBatchSize(1000000), // set batch size _very large_ so that BatchByteSize determines batch sizes
+						WithBatchByteSize(batchByteSize),
+						WithWorkers(workers),
+					)
+					require.NoError(b, err)
+					b.StartTimer()
+					r, err = copier.Copy(ctx, reader)
+					reader.Reset(rows)
+					require.NoError(b, err)
+					require.NotEqual(b, 0, r.InsertedRows)
+					total += r.InsertedRows
+				}
+				b.StopTimer()
+				elapsed := b.Elapsed().Seconds()
+
+				b.ReportMetric(float64(total)/elapsed, "rows/sec")
+				b.ReportMetric(float64(total)/float64(b.N), "items/op")
+			})
+		}
 	}
 }

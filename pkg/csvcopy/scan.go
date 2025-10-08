@@ -186,7 +186,7 @@ func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out c
 			byteEnd := counter.Total - reader.Buffered()
 			// Chunk will be bigger than ChunkByteSize if we append the current line. Let's send the data we have int he buffer
 			if byteEnd-byteStart > batchSize {
-				log.Printf("reached max batch size, sending %d rows", bufferedRows)
+				//log.Printf("reached max batch size, sending %d rows", bufferedRows)
 				err := send(byteEndBeforeLine)
 				if err != nil {
 					return err
