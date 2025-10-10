@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"testing"
@@ -1981,12 +1983,11 @@ func setupDatabase(ctx context.Context, b *testing.B) string {
 		connStr, err = pgContainer.ConnectionString(ctx, "sslmode=disable")
 		require.NoError(b, err)
 	}
-	setupTable(ctx, b, connStr)
 
 	return connStr
 }
 
-func setupTable(ctx context.Context, b *testing.B, connStr string) {
+func setupTable(ctx context.Context, b *testing.B, connStr string, colCount int64) {
 	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
 	require.NoError(b, err)
 	defer db.Close()
@@ -1996,29 +1997,112 @@ func setupTable(ctx context.Context, b *testing.B, connStr string) {
 	defer connx.Close()
 
 	_, err = connx.ExecContext(ctx, "drop table if exists public.sensor_readings")
-	colsToGenerate, err := strconv.ParseInt(os.Getenv("TEST_DATASET_ROW_WIDTH"), 10, 64)
 	colString := ""
-	for i := range colsToGenerate {
+	for i := range colCount {
 		colString += fmt.Sprintf(", v%d float8", i)
 	}
 	_, err = connx.ExecContext(ctx, fmt.Sprintf("create table public.sensor_readings (timestamp timestamptz, device_id int %s)", colString))
 	require.NoError(b, err)
 }
 
-func generateRows(b *testing.B) *bytes.Buffer {
-	rowsToGenerate, err := strconv.ParseInt(os.Getenv("TEST_DATASET_ROW_COUNT"), 10, 64)
-	colsToGenerate, err := strconv.ParseInt(os.Getenv("TEST_DATASET_ROW_WIDTH"), 10, 64)
-	require.NoError(b, err)
+func generateRows(rowCount, colCount int64) *bytes.Buffer {
 	buf := bytes.Buffer{}
-	for i := range rowsToGenerate {
+	for i := range rowCount {
 		buf.Write([]byte(fmt.Sprintf("%s,%d", time.Now().Format(time.RFC3339), i % 1000)))
-		for range colsToGenerate {
+		for range colCount {
 			buf.Write([]byte(fmt.Sprintf(",%f", rand.Float64())))
 		}
 		buf.Write([]byte("\n"))
 	}
 	return &buf
 }
+
+func BenchmarkAllocations(b *testing.B) {
+	ctx := context.Background()
+	kb := 1024
+	batchByteSize := 4096 * kb
+	workers := 8
+
+	testDataSetRowCount := os.Getenv("TEST_DATASET_ROW_COUNT")
+	rowCount := int64(20_000_000)
+	if testDataSetRowCount != "" {
+		var err error
+		rowCount, err = strconv.ParseInt(testDataSetRowCount, 10, 64)
+		require.NoError(b, err)
+	}
+
+	testDataSetRowWidth := os.Getenv("TEST_DATASET_ROW_WIDTH")
+	colCount := int64(2)
+	if testDataSetRowWidth != "" {
+		var err error
+		colCount, err = strconv.ParseInt(testDataSetRowWidth, 10, 64)
+		require.NoError(b, err)
+	}
+	cols := ""
+	for i := range colCount {
+		cols += fmt.Sprintf(",v%d", i)
+	}
+
+	memoryProfilePath := "memoryprofile.pprof"
+	cpuProfilePath := "cpuprofile.pprof"
+
+	rows := generateRows(rowCount, colCount).Bytes()
+	reader := bytes.NewReader(rows)
+
+	connStr := setupDatabase(ctx, b)
+	setupTable(ctx, b, connStr, colCount)
+
+	var r Result
+	total := int64(0)
+
+	cpuProfileFile, err := os.Create(cpuProfilePath)
+	require.NoError(b, err)
+	defer cpuProfileFile.Close() // error handling omitted for example
+	err = pprof.StartCPUProfile(cpuProfileFile)
+	require.NoError(b, err)
+
+	memProfileFileA, err := os.Create(memoryProfilePath + "-a")
+	require.NoError(b, err)
+	defer memProfileFileA.Close() // error handling omitted for example
+	runtime.GC() // get up-to-date statistics
+	err = pprof.Lookup("allocs").WriteTo(memProfileFileA, 0)
+	require.NoError(b, err)
+
+	b.ResetTimer()
+	copier, err := NewCopier(connStr, "sensor_readings",
+		WithColumns(fmt.Sprintf("timestamp,device_id%s", cols)),
+		WithBatchSize(1000000), // set batch size _very large_ so that BatchByteSize determines batch sizes
+		WithBatchByteSize(batchByteSize),
+		WithWorkers(workers),
+	)
+	require.NoError(b, err)
+
+	for range b.N {
+		r, err = copier.Copy(ctx, reader)
+		reader.Reset(rows)
+		require.NoError(b, err)
+		require.NotEqual(b, 0, r.InsertedRows)
+		total += r.InsertedRows
+	}
+	pprof.StopCPUProfile()
+	b.StopTimer()
+
+	memProfileFileB, err := os.Create(memoryProfilePath + "-b")
+	require.NoError(b, err)
+	defer memProfileFileB.Close() // error handling omitted for example
+	runtime.GC() // get up-to-date statistics
+	// Lookup("allocs") creates a profile similar to go test -memprofile.
+	// Alternatively, use Lookup("heap") for a profile
+	// that has inuse_space as the default index.
+	err = pprof.Lookup("allocs").WriteTo(memProfileFileB, 0)
+	require.NoError(b, err)
+
+	elapsed := b.Elapsed().Seconds()
+
+	b.ReportMetric(float64(total)/elapsed, "rows/sec")
+	b.ReportMetric(float64(total)/float64(b.N), "items/op")
+}
+
 
 // BenchmarkBatchByteSize can be used to determine the optimal setting of
 // BatchByteSize for a target instance. It tries various combinations of
@@ -2029,22 +2113,25 @@ func BenchmarkBatchByteSize(b *testing.B) {
 	batchSizesInKb := []int{/*1, 2, 4, 8, */16,  64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384}
 	workerSizes := []int{/*1, 2, 4,*/ 8}
 
-	rows := generateRows(b).Bytes()
-	reader := bytes.NewReader(rows)
-
-	connStr := setupDatabase(ctx, b)
+	rowCount, err := strconv.ParseInt(os.Getenv("TEST_DATASET_ROW_COUNT"), 10, 64)
+	require.NoError(b, err)
 
 	testDataSetRowWidth := os.Getenv("TEST_DATASET_ROW_WIDTH")
-	colsToGenerate := int64(2)
+	colCount := int64(2)
 	if testDataSetRowWidth != "" {
 		var err error
-		colsToGenerate, err = strconv.ParseInt(testDataSetRowWidth, 10, 64)
+		colCount, err = strconv.ParseInt(testDataSetRowWidth, 10, 64)
 		require.NoError(b, err)
 	}
 	cols := ""
-	for i := range colsToGenerate {
+	for i := range colCount {
 		cols += fmt.Sprintf(",v%d", i)
 	}
+
+	rows := generateRows(rowCount, colCount).Bytes()
+	reader := bytes.NewReader(rows)
+
+	connStr := setupDatabase(ctx, b)
 
 	for _, workers := range workerSizes {
 		for _, size := range batchSizesInKb {
@@ -2057,7 +2144,7 @@ func BenchmarkBatchByteSize(b *testing.B) {
 				b.ResetTimer()
 				for range b.N {
 					b.StopTimer()
-					setupTable(ctx, b, connStr)
+					setupTable(ctx, b, connStr, colCount)
 					copier, err := NewCopier(connStr, "sensor_readings",
 						WithColumns(fmt.Sprintf("timestamp,device_id%s", cols)),
 						WithBatchSize(1000000), // set batch size _very large_ so that BatchByteSize determines batch sizes
