@@ -516,7 +516,7 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 	if batch.Location.HasImportID() && !isTemporaryError(failHandlerError) {
 		connx, err := db.Connx(ctx)
 		if err != nil {
-			return fmt.Errorf("failed to connect to database")
+			return fmt.Errorf("failed to connect to database: %w", err)
 		}
 		defer connx.Close()
 
