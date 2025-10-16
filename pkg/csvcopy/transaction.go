@@ -190,14 +190,12 @@ func ensureTransactionTable(ctx context.Context, connString string) error {
 		autovacuum_enabled = on
 	);
 
-	-- Index for efficient lookups and ordering by import_id and start_row
-	-- Used when finding the next batch to process for a specific import
-	CREATE INDEX IF NOT EXISTS idx_transactions_import_start
-	ON timescaledb_parallel_copy.transactions (import_id, start_row);
-
 	-- Index for efficient cleanup of old transactions
 	CREATE INDEX IF NOT EXISTS idx_transactions_created_at
 	ON timescaledb_parallel_copy.transactions (created_at);
+
+	-- Drop index that might have existed in older versions
+	DROP INDEX IF EXISTS idx_transactions_import_start;
 	`
 
 	_, err = connx.ExecContext(ctx, sql)
