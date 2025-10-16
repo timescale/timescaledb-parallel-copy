@@ -577,7 +577,7 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 
 	connx, err := db.Connx(ctx)
 	if err != nil {
-		return HandleCopyErrorResult{}, fmt.Errorf("failed to connect to database")
+		return HandleCopyErrorResult{}, fmt.Errorf("failed to connect to database: %w", err)
 	}
 	defer connx.Close()
 
