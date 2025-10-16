@@ -29,10 +29,10 @@ func connect(connStr string) (*sqlx.DB, error) {
 	return db, nil
 }
 
-// copyFromLines bulk-loads data using the given copyCmd. lines must provide a
+// CopyFromLines bulk-loads data using the given copyCmd. lines must provide a
 // set of complete lines of CSV data, including the end-of-line delimiters.
 // Returns the number of rows inserted.
-func copyFromLines(ctx context.Context, conn *sql.Conn, lines io.Reader, copyCmd string) (int64, error) {
+func CopyFromLines(ctx context.Context, conn *sql.Conn, lines io.Reader, copyCmd string) (int64, error) {
 	var rowCount int64
 	// pgx requires us to use the low-level API for a raw COPY FROM operation.
 	err := conn.Raw(func(driverConn interface{}) error {
@@ -63,13 +63,15 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 	defer connx.Close()
 
 	if !batch.Location.HasImportID() {
-		rowCount, err := copyFromLines(ctx, connx.Conn, &batch.data, copyCmd)
+		rowCount, err := CopyFromLines(ctx, connx.Conn, batch.Data, copyCmd)
 		if err != nil {
 			return rowCount, fmt.Errorf("failed to copy from lines %w", err)
 		}
 		return rowCount, nil
 	}
 
+	// This puts the connx in transaction mode, so when we use connx.Conn, it will be in the same transaction.
+	// Refer to TestAtomicityAssurance for a working example that proves atomicity.
 	tx, err := connx.BeginTxx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return 0, fmt.Errorf("failed to start transaction: %w", err)
@@ -101,7 +103,7 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 		return 0, fmt.Errorf("failed to insert control row, %w", err)
 	}
 
-	rowCount, err := copyFromLines(ctx, connx.Conn, &batch.data, copyCmd)
+	rowCount, err := CopyFromLines(ctx, connx.Conn, batch.Data, copyCmd)
 	if err != nil {
 		return rowCount, fmt.Errorf("failed to copy from lines %w", err)
 	}

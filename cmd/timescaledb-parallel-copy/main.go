@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/timescale/timescaledb-parallel-copy/pkg/csvcopy"
+	"github.com/timescale/timescaledb-parallel-copy/pkg/errorhandlers"
 )
 
 const (
@@ -55,6 +56,8 @@ var (
 	verbose         bool
 	showVersion     bool
 
+	onConflictDoNothing bool
+
 	dbName string
 )
 
@@ -92,6 +95,8 @@ func init() {
 	flag.DurationVar(&reportingPeriod, "reporting-period", 0*time.Second, "Period to report insert stats; if 0s, intermediate results will not be reported")
 	flag.BoolVar(&verbose, "verbose", false, "Print more information about copying statistics")
 
+	flag.BoolVar(&onConflictDoNothing, "on-conflict-do-nothing", false, "Skip duplicate rows on unique constraint violations")
+
 	flag.BoolVar(&showVersion, "version", false, "Show the version of this tool")
 
 	flag.Parse()
@@ -116,6 +121,7 @@ func main() {
 	if headerLinesCnt != 1 {
 		log.Fatalf("Error: -header-line-count is deprecated. Use -skip-lines instead")
 	}
+
 
 	logger := &csvCopierLogger{}
 
@@ -157,6 +163,13 @@ func main() {
 	if skipBatchErrors {
 		batchErrorHandler = csvcopy.BatchHandlerNoop()
 	}
+
+	if onConflictDoNothing {
+		batchErrorHandler = errorhandlers.BatchConflictHandler(
+			errorhandlers.WithConflictHandlerNext(batchErrorHandler),
+		)
+	}
+
 	if verbose || skipBatchErrors {
 		batchErrorHandler = csvcopy.BatchHandlerLog(logger, batchErrorHandler)
 	}

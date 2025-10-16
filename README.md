@@ -218,6 +218,8 @@ Usage of timescaledb-parallel-copy:
         Number of rows to insert overall; 0 means to insert all
   -log-batches
         Whether to time individual batches.
+  -on-conflict-do-nothing
+        Skip duplicate rows on unique constraint violations
   -quote character
         The QUOTE character to use during COPY (default '"')
   -reporting-period duration
@@ -362,3 +364,20 @@ timestamp,temperature,humidity
 ```
 
 Both files can use the same mapping configuration and import successfully into the same database table, even though they use different column names for the temperature data. The tool only validates for duplicate database columns among the columns actually present in each specific input file.
+
+### Conflict Resolution
+
+Use `--on-conflict-do-nothing` to automatically skip duplicate rows when unique constraint violations occur:
+
+```bash
+# Skip duplicate rows and continue importing
+$ timescaledb-parallel-copy --connection $DATABASE_URL --table metrics --file data.csv \
+    --on-conflict-do-nothing
+```
+
+This uses PostgreSQL's `ON CONFLICT DO NOTHING` clause to ignore rows that would violate unique constraints, allowing the import to continue with just the non-duplicate data.
+
+Note that this statement is not allowed within a `COPY FROM`. The tool will fallback to moving your data into a temporal table and running `INSERT INTO ... SELECT * FROM ... ON CONFLICT DO NOTHING`.
+
+This flag is intended to detect real duplicates and not incremental changes to rows. This means it is safe to use this setting is you expect your data to have duplicate rows, but it is not ok to use this as an ingestion pipeline where you expect updates for the same unique constraint.
+

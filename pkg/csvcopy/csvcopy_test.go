@@ -17,6 +17,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/timescale/timescaledb-parallel-copy/pkg/buffer"
 )
 
 func TestWriteDataToCSV(t *testing.T) {
@@ -909,7 +910,7 @@ type MockErrorHandler struct {
 	stop   bool
 }
 
-func (fs *MockErrorHandler) HandleError(batch Batch, reason error) *BatchError {
+func (fs *MockErrorHandler) HandleError(ctx context.Context, c *Copier, db *sqlx.Conn, batch Batch, reason error) HandleBatchErrorResult {
 	if fs.Errors == nil {
 		fs.Errors = map[int]error{}
 	}
@@ -975,7 +976,7 @@ func TestFailedBatchHandlerFailure(t *testing.T) {
 
 	writer.Flush()
 
-	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithBatchSize(2), WithBatchErrorHandler(func(batch Batch, err error) *BatchError {
+	copier, err := NewCopier(connStr, "metrics", WithColumns("device_id,label,value"), WithBatchSize(2), WithBatchErrorHandler(func(_ context.Context, _ *Copier, _ *sqlx.Conn, _ Batch, err error) HandleBatchErrorResult {
 		return NewErrStop(fmt.Errorf("couldn't handle error %w", err))
 	}))
 	require.NoError(t, err)
@@ -1074,14 +1075,14 @@ func TestTransactionState(t *testing.T) {
 	assert.Equal(t, "test-file-id", row.ImportID)
 	assert.Equal(t, int64(0), row.StartRow)
 	assert.Equal(t, 2, row.RowCount)
-	assert.Equal(t, transactionRowStateCompleted, row.State)
+	assert.Equal(t, TransactionRowStateCompleted, row.State)
 
 	batch2, row, err := batch1.Next(ctx, connx)
 	require.NoError(t, err)
 	assert.Equal(t, "test-file-id", row.ImportID)
 	assert.Equal(t, int64(2), row.StartRow)
 	assert.Equal(t, 2, row.RowCount)
-	assert.Equal(t, transactionRowStateFailed, row.State)
+	assert.Equal(t, TransactionRowStateFailed, row.State)
 	assert.NotEmpty(t, row.FailureReason)
 
 	batch3, row, err := batch2.Next(ctx, connx)
@@ -1089,7 +1090,7 @@ func TestTransactionState(t *testing.T) {
 	assert.Equal(t, "test-file-id", row.ImportID)
 	assert.Equal(t, int64(4), row.StartRow)
 	assert.Equal(t, 2, row.RowCount)
-	assert.Equal(t, transactionRowStateCompleted, row.State)
+	assert.Equal(t, TransactionRowStateCompleted, row.State)
 
 	batch4, row, err := batch3.Next(ctx, connx)
 	require.NoError(t, err)
@@ -1178,15 +1179,15 @@ func TestTransactionIdempotency(t *testing.T) {
 
 	batch1, row, err := LoadTransaction(ctx, connx, "test-file-id")
 	require.NoError(t, err)
-	assert.Equal(t, transactionRowStateCompleted, row.State)
+	assert.Equal(t, TransactionRowStateCompleted, row.State)
 
 	batch2, row, err := batch1.Next(ctx, connx)
 	require.NoError(t, err)
-	assert.Equal(t, transactionRowStateFailed, row.State)
+	assert.Equal(t, TransactionRowStateFailed, row.State)
 
 	_, row, err = batch2.Next(ctx, connx)
 	require.NoError(t, err)
-	assert.Equal(t, transactionRowStateCompleted, row.State)
+	assert.Equal(t, TransactionRowStateCompleted, row.State)
 
 	_, err = tmpfile.Seek(0, 0)
 	require.NoError(t, err)
@@ -1211,16 +1212,16 @@ func TestTransactionIdempotency(t *testing.T) {
 
 	batch1, row, err = LoadTransaction(ctx, connx, "test-file-id")
 	require.NoError(t, err)
-	assert.Equal(t, transactionRowStateCompleted, row.State)
+	assert.Equal(t, TransactionRowStateCompleted, row.State)
 
 	batch2, row, err = batch1.Next(ctx, connx)
 
 	require.NoError(t, err)
-	assert.Equal(t, transactionRowStateFailed, row.State)
+	assert.Equal(t, TransactionRowStateFailed, row.State)
 
 	_, row, err = batch2.Next(ctx, connx)
 	require.NoError(t, err)
-	assert.Equal(t, transactionRowStateCompleted, row.State)
+	assert.Equal(t, TransactionRowStateCompleted, row.State)
 
 	var total int
 	err = connx.QueryRowxContext(ctx, "SELECT COUNT(*) FROM public.metrics").Scan(&total)
@@ -1483,15 +1484,15 @@ func TestTransactionFailureRetry(t *testing.T) {
 
 		batch1, row, err := LoadTransaction(ctx, connx, "test-file-id")
 		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
+		assert.Equal(t, TransactionRowStateCompleted, row.State)
 
 		batch2, row, err := batch1.Next(ctx, connx)
 		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateFailed, row.State)
+		assert.Equal(t, TransactionRowStateFailed, row.State)
 
 		_, row, err = batch2.Next(ctx, connx)
 		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
+		assert.Equal(t, TransactionRowStateCompleted, row.State)
 
 		reader, err = os.Open(goodFile.Name())
 		require.NoError(t, err)
@@ -1513,16 +1514,16 @@ func TestTransactionFailureRetry(t *testing.T) {
 
 		batch1, row, err = LoadTransaction(ctx, connx, "test-file-id")
 		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
+		assert.Equal(t, TransactionRowStateCompleted, row.State)
 
 		batch2, row, err = batch1.Next(ctx, connx)
 
 		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
+		assert.Equal(t, TransactionRowStateCompleted, row.State)
 
 		_, row, err = batch2.Next(ctx, connx)
 		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
+		assert.Equal(t, TransactionRowStateCompleted, row.State)
 
 		var total int
 		err = connx.QueryRowxContext(ctx, "SELECT COUNT(*) FROM public.metrics").Scan(&total)
@@ -1639,16 +1640,16 @@ func TestTransactionFailureRetry(t *testing.T) {
 
 		batch1, row, err := LoadTransaction(ctx, connx, "test-file-id")
 		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
+		assert.Equal(t, TransactionRowStateCompleted, row.State)
 
 		batch2, row, err := batch1.Next(ctx, connx)
 		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateFailed, row.State)
+		assert.Equal(t, TransactionRowStateFailed, row.State)
 		assert.Contains(t, *row.FailureReason, "forced-failure")
 
 		_, row, err = batch2.Next(ctx, connx)
 		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
+		assert.Equal(t, TransactionRowStateCompleted, row.State)
 
 		reader, err = os.Open(retryFile.Name())
 		require.NoError(t, err)
@@ -1670,17 +1671,17 @@ func TestTransactionFailureRetry(t *testing.T) {
 
 		batch1, row, err = LoadTransaction(ctx, connx, "test-file-id")
 		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
+		assert.Equal(t, TransactionRowStateCompleted, row.State)
 
 		batch2, row, err = batch1.Next(ctx, connx)
 
 		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateFailed, row.State)
+		assert.Equal(t, TransactionRowStateFailed, row.State)
 		assert.Contains(t, *row.FailureReason, "still fails")
 
 		_, row, err = batch2.Next(ctx, connx)
 		require.NoError(t, err)
-		assert.Equal(t, transactionRowStateCompleted, row.State)
+		assert.Equal(t, TransactionRowStateCompleted, row.State)
 
 		var total int
 		err = connx.QueryRowxContext(ctx, "SELECT COUNT(*) FROM public.metrics").Scan(&total)
@@ -1856,7 +1857,7 @@ func TestCalculateColumnsFromHeaders(t *testing.T) {
 				columnMapping:   ColumnsMapping(tt.columnMapping),
 				quoteCharacter:  tt.quoteCharacter,
 				escapeCharacter: tt.escapeCharacter,
-				logger:          &noopLogger{},
+				Logger:          &noopLogger{},
 			}
 
 			// Create a buffered reader with the test CSV headers
@@ -1885,7 +1886,7 @@ func TestCalculateColumnsFromHeaders_NoMapping(t *testing.T) {
 	copier := &Copier{
 		skip:          1,
 		columnMapping: ColumnsMapping{}, // Empty mapping
-		logger:        &noopLogger{},
+		Logger:        &noopLogger{},
 	}
 
 	csvData := "id,name,email\ndata1,data2,data3\n"
@@ -1951,4 +1952,121 @@ func TestColumnsMapping_Get(t *testing.T) {
 			assert.Equal(t, tt.expectedColumn, column)
 		})
 	}
+}
+
+// This test serves as an example of how the CopyFromBatch implementation is atomic.
+func TestAtomicityAssurance(t *testing.T) {
+	ctx := context.Background()
+
+	pgContainer, err := postgres.Run(ctx,
+		"postgres:15.3-alpine",
+		postgres.WithDatabase("test-db"),
+		postgres.WithUsername("postgres"),
+		postgres.WithPassword("postgres"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).WithStartupTimeout(5*time.Second)),
+	)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		err := pgContainer.Terminate(ctx)
+		require.NoError(t, err)
+	})
+
+	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	require.NoError(t, err)
+
+	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
+	require.NoError(t, err)
+	defer db.Close()
+
+	// Setup test table
+	_, err = db.ExecContext(ctx, "CREATE TABLE public.test_metrics (device_id int, label text, value float8)")
+	require.NoError(t, err)
+
+	// Ensure transaction table exists
+	err = ensureTransactionTable(ctx, connStr)
+	require.NoError(t, err)
+
+	// Create test batch data
+	csvLines := [][]byte{
+		[]byte("42,test,4.2\n"),
+		[]byte("24,data,2.4\n"),
+	}
+	seekableData := buffer.NewSeekable(csvLines)
+
+	batch := Batch{
+		Data: seekableData,
+		Location: Location{
+			ImportID:   "test-atomicity-assurance",
+			StartRow:   0,
+			RowCount:   2,
+			ByteOffset: 0,
+			ByteLen:    len("42,test,4.2\n24,data,2.4\n"),
+		},
+	}
+
+	// Test the current implementation (should be atomic)
+	testCurrentImplementation := func() error {
+		connx, err := db.Connx(ctx)
+		if err != nil {
+			return fmt.Errorf("acquiring DBx connection for COPY: %w", err)
+		}
+		defer connx.Close()
+
+		// Use BeginTxx as the current code does
+		tx, err := connx.BeginTxx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to start transaction: %w", err)
+		}
+
+		defer func() {
+			_ = tx.Rollback()
+		}()
+
+		// Set transaction control row first
+		tr := newTransactionAt(batch.Location)
+		err = tr.setCompleted(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("failed to insert control row, %w", err)
+		}
+
+		// Perform COPY operation (this should run within the transaction)
+		copyCmd := "COPY public.test_metrics(device_id,label,value) FROM STDIN WITH DELIMITER ',' CSV"
+		_, err = CopyFromLines(ctx, connx.Conn, batch.Data, copyCmd)
+		if err != nil {
+			return fmt.Errorf("failed to copy from lines %w", err)
+		}
+
+		// Simulate failure - this should cause rollback of EVERYTHING if atomic
+		return fmt.Errorf("simulated failure - should rollback both COPY data and control row")
+	}
+
+	// Run the test
+	err = testCurrentImplementation()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "simulated failure")
+
+	// Check what actually happened
+	var targetRowCount int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM public.test_metrics").Scan(&targetRowCount)
+	require.NoError(t, err)
+
+	var controlRowCount int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM timescaledb_parallel_copy.transactions WHERE import_id = 'test-atomicity-assurance'").Scan(&controlRowCount)
+	require.NoError(t, err)
+
+	// This test REQUIRES atomicity - it will FAIL if the implementation is broken
+	if targetRowCount != 0 || controlRowCount != 0 {
+		t.Errorf("ATOMICITY VIOLATION: Expected both counts to be 0, got targetRows=%d, controlRows=%d",
+			targetRowCount, controlRowCount)
+		t.Errorf("This means the COPY operation or control row was not properly rolled back")
+		t.FailNow()
+	}
+
+	// If we get here, atomicity is working correctly
+	assert.Equal(t, 0, targetRowCount, "COPY data must be rolled back")
+	assert.Equal(t, 0, controlRowCount, "Control row must be rolled back")
+	t.Logf("SUCCESS: Current implementation maintains atomicity - both operations rolled back correctly")
 }

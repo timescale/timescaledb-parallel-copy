@@ -2,7 +2,6 @@ package csvcopy
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -378,7 +377,10 @@ d"
 				i := 0
 				for buf := range rowChan {
 					assert.EqualValues(t, c.expectedRowCount[i], buf.Location.RowCount, "on batch %d", i)
-					actual = append(actual, string(bytes.Join(buf.data, nil)))
+					// Read all data from the Seekable buffer
+					_, _ = buf.Data.Seek(0, io.SeekStart)
+					data, _ := io.ReadAll(buf.Data)
+					actual = append(actual, string(data))
 					i++
 				}
 
@@ -412,7 +414,7 @@ d"
 				}
 			}
 
-			err := scan(context.Background(), counter, bufferedReader, rowChan, opts)
+			err := scan(context.Background(), noopLoggerFunc, counter, bufferedReader, rowChan, opts)
 			if err != nil {
 				if c.expectedError == "" {
 					assert.NoError(t, err)
@@ -474,7 +476,7 @@ d"
 				}
 			}
 
-			err := scan(context.Background(), counter, bufferedReader, rowChan, opts)
+			err := scan(context.Background(), noopLoggerFunc, counter, bufferedReader, rowChan, opts)
 			if !errors.Is(err, expected) {
 				t.Errorf("Scan() returned unexpected error: %v", err)
 				t.Logf("want: %v", expected)
@@ -595,7 +597,7 @@ func BenchmarkScan(b *testing.B) {
 						}
 					}
 
-					err := scan(context.Background(), counter, bufferedReader, rowChan, opts)
+					err := scan(context.Background(), noopLoggerFunc, counter, bufferedReader, rowChan, opts)
 					if err != nil {
 						b.Errorf("Scan() returned unexpected error: %v", err)
 					}
@@ -617,3 +619,5 @@ func RandString(n int) string {
 	}
 	return string(b)
 }
+
+var noopLoggerFunc = func(ctx context.Context, msg string, args ...interface{}) {}

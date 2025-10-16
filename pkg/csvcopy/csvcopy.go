@@ -3,6 +3,7 @@ package csvcopy
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,24 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
 )
+
+// contextKey is used for context values to avoid collisions
+type contextKey string
+
+const workerIDKey contextKey = "workerID"
+
+// WithWorkerID adds a worker ID to the context
+func WithWorkerID(ctx context.Context, workerID int) context.Context {
+	return context.WithValue(ctx, workerIDKey, workerID)
+}
+
+// GetWorkerIDFromContext extracts the worker ID from context, returns -1 if not found
+func GetWorkerIDFromContext(ctx context.Context) int {
+	if workerID, ok := ctx.Value(workerIDKey).(int); ok {
+		return workerID
+	}
+	return -1
+}
 
 const TAB_CHAR_STR = "\\t"
 
@@ -49,7 +68,7 @@ type Copier struct {
 	copyOptions string
 
 	schemaName        string
-	logger            Logger
+	Logger            Logger
 	splitCharacter    string
 	quoteCharacter    string
 	escapeCharacter   string
@@ -80,6 +99,26 @@ type Copier struct {
 	failHandler BatchErrorHandler
 }
 
+// LogInfo logs a message with worker ID extracted from context if available
+func (c *Copier) LogInfo(ctx context.Context, msg string, args ...interface{}) {
+	if !c.verbose {
+		return
+	}
+	if workerID := GetWorkerIDFromContext(ctx); workerID >= 0 {
+		c.Logger.Infof("[WORKER-%d] "+msg, append([]interface{}{workerID}, args...)...)
+	} else {
+		c.Logger.Infof(msg, args...)
+	}
+}
+
+func (c *Copier) LogError(ctx context.Context, msg string, args ...interface{}) {
+	if workerID := GetWorkerIDFromContext(ctx); workerID >= 0 {
+		c.Logger.Infof("[WORKER-%d] "+msg, append([]interface{}{workerID}, args...)...)
+	} else {
+		c.Logger.Infof(msg, args...)
+	}
+}
+
 func NewCopier(
 	connString string,
 	tableName string,
@@ -91,7 +130,7 @@ func NewCopier(
 
 		// Defaults
 		schemaName:        "public",
-		logger:            &noopLogger{},
+		Logger:            &noopLogger{},
 		copyOptions:       "CSV",
 		splitCharacter:    ",",
 		quoteCharacter:    "",
@@ -119,11 +158,11 @@ func NewCopier(
 	}
 
 	if copier.skip > 0 && copier.verbose {
-		copier.logger.Infof("Skipping the first %d lines of the input.", copier.skip)
+		copier.Logger.Infof("Skipping the first %d lines of the input.", copier.skip)
 	}
 
 	if copier.reportingFunction == nil {
-		copier.reportingFunction = DefaultReportFunc(copier.logger)
+		copier.reportingFunction = DefaultReportFunc(copier.Logger)
 	}
 
 	return copier, nil
@@ -137,7 +176,7 @@ func (c *Copier) Truncate() (err error) {
 	defer func() {
 		err = dbx.Close()
 	}()
-	_, err = dbx.Exec(fmt.Sprintf("TRUNCATE %s", c.getFullTableName()))
+	_, err = dbx.Exec(fmt.Sprintf("TRUNCATE %s", c.GetFullTableName()))
 	if err != nil {
 		return fmt.Errorf("failed to truncate table: %w", err)
 	}
@@ -150,7 +189,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		if err := ensureTransactionTable(ctx, c.connString); err != nil {
 			return Result{}, fmt.Errorf("failed to ensure transaction table, %w", err)
 		}
-		c.logger.Infof("Cleaning old transactions older than %s", c.idempotencyWindow)
+		c.Logger.Infof("Cleaning old transactions older than %s", c.idempotencyWindow)
 		if err := cleanOldTransactions(ctx, c.connString, c.idempotencyWindow); err != nil {
 			return Result{}, fmt.Errorf("failed to clean old transactions, %w", err)
 		}
@@ -200,12 +239,16 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		workerWg.Add(1)
 		go func(i int) {
 			defer workerWg.Done()
-			err := c.processBatches(ctx, batchChan)
+			// Add worker ID to context for all operations in this worker
+			workerCtx := WithWorkerID(ctx, i)
+			c.LogInfo(workerCtx, "start worker")
+			err := c.processBatches(workerCtx, batchChan, i)
 			if err != nil {
+				c.LogError(workerCtx, "worker error: %v", err)
 				errCh <- err
 				cancel()
 			}
-			c.logger.Infof("stop worker %d", i)
+			c.LogInfo(workerCtx, "stop worker")
 		}(i)
 
 	}
@@ -215,7 +258,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	defer cancelSupportCtx()
 	// Reporting thread
 	if c.reportingPeriod > (0 * time.Second) {
-		c.logger.Infof("There will be reports every %s", c.reportingPeriod.String())
+		c.Logger.Infof("There will be reports every %s", c.reportingPeriod.String())
 		supportWg.Add(1)
 		go func() {
 			defer supportWg.Done()
@@ -244,12 +287,12 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		if err := scan(ctx, counter, bufferedReader, batchChan, opts); err != nil {
+		if err := scan(ctx, c.LogInfo, counter, bufferedReader, batchChan, opts); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
 			cancel()
 		}
 		close(batchChan)
-		c.logger.Infof("stop scan")
+		c.LogInfo(ctx, "stop scan")
 	}()
 	workerWg.Wait()
 
@@ -307,7 +350,7 @@ func (c *Copier) useAutomaticColumnMapping(headers []string) error {
 		quotedHeaders[i] = pgx.Identifier{header}.Sanitize()
 	}
 	c.columns = strings.Join(quotedHeaders, ",")
-	c.logger.Infof("automatic column mapping: %s", c.columns)
+	c.LogInfo(context.TODO(), "automatic column mapping: %s", c.columns)
 	return nil
 }
 
@@ -364,7 +407,7 @@ func (c *Copier) calculateColumnsFromHeaders(bufferedReader *bufio.Reader) error
 	}
 
 	c.columns = strings.Join(columns, ",")
-	c.logger.Infof("Using column mapping: %s", c.columns)
+	c.LogInfo(context.TODO(), "Using column mapping: %s", c.columns)
 	return nil
 }
 
@@ -413,15 +456,11 @@ func (e ErrAtRow) Unwrap() error {
 	return e.Err
 }
 
-// processBatches reads batches from channel c and copies them to the target
-// server while tracking stats on the write.
-func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) {
-	dbx, err := connect(c.connString)
-	if err != nil {
-		return err
-	}
-	defer dbx.Close()
+func (c *Copier) CopyCmd() string {
+	return c.CopyCmdWithContext(context.Background())
+}
 
+func (c *Copier) CopyCmdWithContext(ctx context.Context) string {
 	delimStr := "'" + c.splitCharacter + "'"
 	if c.splitCharacter == TAB_CHAR_STR {
 		delimStr = "E" + delimStr
@@ -437,13 +476,32 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) 
 			quotes, strings.ReplaceAll(c.escapeCharacter, "'", "''"))
 	}
 
-	var copyCmd string
+	var baseCmd string
 	if c.columns != "" {
-		copyCmd = fmt.Sprintf("COPY %s(%s) FROM STDIN WITH DELIMITER %s %s %s", c.getFullTableName(), c.columns, delimStr, quotes, c.copyOptions)
+		baseCmd = fmt.Sprintf("COPY %s(%s) FROM STDIN WITH DELIMITER %s %s %s", c.GetFullTableName(), c.columns, delimStr, quotes, c.copyOptions)
 	} else {
-		copyCmd = fmt.Sprintf("COPY %s FROM STDIN WITH DELIMITER %s %s %s", c.getFullTableName(), delimStr, quotes, c.copyOptions)
+		baseCmd = fmt.Sprintf("COPY %s FROM STDIN WITH DELIMITER %s %s %s", c.GetFullTableName(), delimStr, quotes, c.copyOptions)
 	}
-	c.logger.Infof("Copy command: %s", copyCmd)
+
+	// Add worker ID comment if available in context
+	if workerID := GetWorkerIDFromContext(ctx); workerID >= 0 {
+		baseCmd = fmt.Sprintf("/* Worker-%d */ %s", workerID, baseCmd)
+	}
+
+	return baseCmd
+}
+
+// processBatches reads batches from channel c and copies them to the target
+// server while tracking stats on the write.
+func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int) (err error) {
+	dbx, err := connect(c.connString)
+	if err != nil {
+		return err
+	}
+	defer dbx.Close()
+
+	copyCmd := c.CopyCmdWithContext(ctx)
+	c.LogInfo(ctx, "Copy command: %s", copyCmd)
 
 	for {
 		if ctx.Err() != nil {
@@ -458,31 +516,40 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) 
 			}
 			atomic.AddInt64(&c.totalRows, int64(batch.Location.RowCount))
 
+			if c.logBatches {
+				c.LogInfo(ctx, "Processing: starting at row %d: rows count %d, byte len %d",
+					batch.Location.StartRow, batch.Location.RowCount, batch.Location.ByteLen)
+			}
+
 			start := time.Now()
 			rows, err := copyFromBatch(ctx, dbx, batch, copyCmd)
 			if err != nil {
-				handleErr := c.handleCopyError(ctx, dbx, batch, err)
+				handleResult, handleErr := c.handleCopyError(ctx, dbx, batch, err)
 				if handleErr != nil {
+					c.LogError(ctx, "Error handler failed for batch %d: %v", batch.Location.StartRow, handleErr)
 					return handleErr
 				}
+				atomic.AddInt64(&c.skippedRows, handleResult.SkippedRows)
+				rows = handleResult.InsertedRows
 			}
 			atomic.AddInt64(&c.insertedRows, rows)
 
-			if err, ok := err.(*ErrBatchAlreadyProcessed); ok {
-				if err.State.State == "completed" {
-					atomic.AddInt64(&c.skippedRows, int64(batch.Location.RowCount))
-				}
-			}
-
 			if c.logBatches {
 				took := time.Since(start)
-				fmt.Printf("[BATCH] starting at row %d, took %v, row count %d, byte len %d, row rate %f/sec\n", batch.Location.StartRow, took, batch.Location.RowCount, batch.Location.ByteLen, float64(batch.Location.RowCount)/float64(took.Seconds()))
+				c.LogInfo(ctx, "Processing: starting at row %d, took %v, row count %d, byte len %d, row rate %f/sec", batch.Location.StartRow, took, batch.Location.RowCount, batch.Location.ByteLen, float64(batch.Location.RowCount)/float64(took.Seconds()))
 			}
 		}
 	}
 }
 
-func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, copyErr error) error {
+type HandleCopyErrorResult struct {
+	// Rows actually inserted
+	InsertedRows int64
+	// Rows found but skipped due to a known reason
+	SkippedRows int64
+}
+
+func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, copyErr error) (HandleCopyErrorResult, error) {
 	errAt := &ErrAtRow{
 		Err:           copyErr,
 		BatchLocation: batch.Location,
@@ -494,46 +561,97 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 	}
 
 	if err, ok := copyErr.(*ErrBatchAlreadyProcessed); ok {
-		c.logger.Infof("skip batch %s already processed with state %s", batch.Location, err.State.State)
-		return nil
+		c.LogInfo(ctx, "skip batch %s already processed with state %s", batch.Location, err.State.State)
+		if err.State.State == "completed" {
+			return HandleCopyErrorResult{
+				InsertedRows: 0,
+				SkippedRows:  int64(batch.Location.RowCount),
+			}, nil
+		}
+		return HandleCopyErrorResult{
+			InsertedRows: 0,
+			SkippedRows:  0,
+		}, nil
+
 	}
 
-	var failHandlerError *BatchError
+	connx, err := db.Connx(ctx)
+	if err != nil {
+		return HandleCopyErrorResult{}, fmt.Errorf("failed to connect to database: %w", err)
+	}
+	defer connx.Close()
+
+	if !batch.Location.HasImportID() {
+		if c.failHandler == nil {
+			return HandleCopyErrorResult{
+				InsertedRows: 0,
+				SkippedRows:  0,
+			}, errAt
+		}
+
+		failHandlerError := c.failHandler(ctx, c, connx, batch, errAt)
+		if !failHandlerError.Continue {
+			return HandleCopyErrorResult{
+				InsertedRows: failHandlerError.InsertedRows,
+				SkippedRows:  failHandlerError.SkippedRows,
+			}, failHandlerError
+		}
+		return HandleCopyErrorResult{
+			InsertedRows: failHandlerError.InsertedRows,
+			SkippedRows:  failHandlerError.SkippedRows,
+		}, nil
+	}
+
+	// If we have an import ID, we need to start a transaction before the error handling to ensure both can run in the same transaction
+	tx, err := connx.BeginTxx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return HandleCopyErrorResult{}, fmt.Errorf("failed to start transaction, %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var failHandlerError HandleBatchErrorResult
 	// If failHandler is defined, attempt to handle the error
 	if c.failHandler != nil {
-		failHandlerError = c.failHandler(batch, errAt)
-		if failHandlerError == nil {
-			// If fail handler error does not return an error,
-			// make it so it recovers the previous error and continues execution
-			failHandlerError = NewErrContinue(errAt)
-		}
+		failHandlerError = c.failHandler(ctx, c, connx, batch, errAt)
 	} else {
 		failHandlerError = NewErrStop(errAt)
 	}
 
-	c.logger.Infof("handling error %#v", failHandlerError)
+	c.LogInfo(ctx, "handling error for batch %s: %#v", batch.Location, failHandlerError)
 
-	if batch.Location.HasImportID() && !isTemporaryError(failHandlerError) {
-		connx, err := db.Connx(ctx)
+	tr := newTransactionAt(batch.Location)
+
+	// If the fail handler is marked as handled, the transaction will be marked as completed. Independently if it still contains an error
+	if failHandlerError.Handled {
+		err = tr.setCompleted(ctx, tx)
 		if err != nil {
-			return fmt.Errorf("failed to connect to database: %w", err)
+			return HandleCopyErrorResult{}, fmt.Errorf("failed to set state to completed for batch %s, %w", batch.Location, err)
 		}
-		defer connx.Close()
-
-		tr := newTransactionAt(batch.Location)
-		err = tr.setFailed(ctx, connx, failHandlerError.Error())
+	} else if !isTemporaryError(failHandlerError.Err) {
+		err = tr.setFailed(ctx, tx, failHandlerError.Error())
 		if err != nil {
 			if !isDuplicateKeyError(err) {
-				return fmt.Errorf("failed to set state to failed, %w", err)
+				return HandleCopyErrorResult{}, fmt.Errorf("failed to set state to failed for batch %s, %w", batch.Location, err)
 			}
 		}
 	}
 
-	if !failHandlerError.Continue {
-		return failHandlerError
+	err = tx.Commit()
+	if err != nil {
+		return HandleCopyErrorResult{}, fmt.Errorf("failed to commit transaction for batch %s, %w", batch.Location, err)
 	}
 
-	return nil
+	if !failHandlerError.Continue {
+		return HandleCopyErrorResult{
+			InsertedRows: failHandlerError.InsertedRows,
+			SkippedRows:  failHandlerError.SkippedRows,
+		}, failHandlerError
+	}
+
+	return HandleCopyErrorResult{
+		InsertedRows: failHandlerError.InsertedRows,
+		SkippedRows:  failHandlerError.SkippedRows,
+	}, nil
 
 }
 
@@ -589,8 +707,16 @@ func (c *Copier) report(ctx context.Context) {
 	}
 }
 
-func (c *Copier) getFullTableName() string {
+func (c *Copier) GetFullTableName() string {
 	return fmt.Sprintf(`"%s"."%s"`, c.schemaName, c.tableName)
+}
+
+func (c *Copier) GetTableName() string {
+	return c.tableName
+}
+
+func (c *Copier) GetSchemaName() string {
+	return c.schemaName
 }
 
 func (c *Copier) GetInsertedRows() int64 {

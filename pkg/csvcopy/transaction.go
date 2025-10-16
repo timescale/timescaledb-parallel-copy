@@ -14,11 +14,11 @@ type Transaction struct {
 	loc Location
 }
 
-type transactionRowState string
+type TransactionRowState string
 
 const (
-	transactionRowStateCompleted transactionRowState = "completed"
-	transactionRowStateFailed    transactionRowState = "failed"
+	TransactionRowStateCompleted TransactionRowState = "completed"
+	TransactionRowStateFailed    TransactionRowState = "failed"
 )
 
 type TransactionRow struct {
@@ -28,7 +28,7 @@ type TransactionRow struct {
 	ByteOffset    int
 	ByteLen       int
 	CreatedAt     time.Time
-	State         transactionRowState
+	State         TransactionRowState
 	FailureReason *string
 }
 

@@ -1,10 +1,13 @@
 package csvcopy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/jmoiron/sqlx"
 )
 
 type Option func(c *Copier) error
@@ -20,7 +23,7 @@ func (l *noopLogger) Infof(msg string, args ...interface{}) {}
 // WithLogger sets the logger where the application will print debug messages
 func WithLogger(logger Logger) Option {
 	return func(c *Copier) error {
-		c.logger = logger
+		c.Logger = logger
 		return nil
 	}
 }
@@ -224,30 +227,46 @@ func WithSchemaName(schema string) Option {
 	}
 }
 
-func NewErrContinue(err error) *BatchError {
-	return &BatchError{
-		Continue: true,
-		Err:      err,
+func NewErrContinue(err error) HandleBatchErrorResult {
+	return HandleBatchErrorResult{
+		Continue:     true,
+		Err:          err,
+		Handled:      false,
+		InsertedRows: 0,
+		SkippedRows:  0,
 	}
 }
 
-func NewErrStop(err error) *BatchError {
-	return &BatchError{
-		Continue: false,
-		Err:      err,
+func NewErrStop(err error) HandleBatchErrorResult {
+	return HandleBatchErrorResult{
+		Continue:     false,
+		Err:          err,
+		Handled:      false,
+		InsertedRows: 0,
+		SkippedRows:  0,
 	}
 }
 
-type BatchError struct {
+type HandleBatchErrorResult struct {
+	// Continue if true, The code will continue processing new batches. Otherwise, it will stop.
 	Continue bool
-	Err      error
+	// Handled if true, It means the error was correctly handled and the resulting batch will be marked as completed
+	Handled bool
+	// Rows number of rows successfully processed by the error handler.
+	// This ensures metrics stay up to date when error handlers can process the rows.
+	InsertedRows int64
+	// Rows found but skipped due to a known reason
+	SkippedRows int64
+	// Err is the error that was returned by the error handler. It may just return the original error to act as a middleware or a new error to indicate failure reason.
+	// The transaction will fail with this error if it is not a temporary error.
+	Err error
 }
 
-func (err BatchError) Error() string {
+func (err HandleBatchErrorResult) Error() string {
 	return fmt.Sprintf("continue: %t, %s", err.Continue, err.Err)
 }
 
-func (err BatchError) Unwrap() error {
+func (err HandleBatchErrorResult) Unwrap() error {
 	return err.Err
 }
 
@@ -257,7 +276,19 @@ func (err BatchError) Unwrap() error {
 // If the error is not handled properly, returning an error will stop the workers
 // If ErrContinue is returned, the batch will be marked as failed but continue processing
 // if ErrStop is returned, the processing will stop
-type BatchErrorHandler func(batch Batch, err error) *BatchError
+type BatchErrorHandler func(
+	ctx context.Context,
+	// c is the copier that is being used to handle the error
+	c *Copier,
+	// db is the database connection running a transaction that is being used to handle the error
+	// It connects to the target database
+	// The error handler is not the owner of the transaction, so it must not commit or rollback it.
+	db *sqlx.Conn,
+	// batch is the batch that has the error
+	batch Batch,
+	// err is the error that was returned the copy operation.
+	err error,
+) HandleBatchErrorResult
 
 // WithBatchErrorHandler specifies which fail handler implementation to use
 func WithBatchErrorHandler(handler BatchErrorHandler) Option {
