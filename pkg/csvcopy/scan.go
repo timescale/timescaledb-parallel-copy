@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
+
+	"github.com/timescale/timescaledb-parallel-copy/pkg/buffer"
 )
 
 // scanOptions contains all the configurable knobs for Scan.
@@ -27,12 +28,18 @@ type scanOptions struct {
 
 // Batch represents an operation to copy data into the DB
 type Batch struct {
-	data     net.Buffers
+	pool 	 *buffer.Pool
+	data     buffer.Segmented
 	Location Location
 }
 
-func newBatch(data net.Buffers, location Location) Batch {
+func (b *Batch) Close() {
+	b.pool.Put(b.data)
+}
+
+func newBatch(pool *buffer.Pool, data buffer.Segmented, location Location) Batch {
 	b := Batch{
+		pool: pool,
 		data:     data,
 		Location: location,
 	}
@@ -55,7 +62,7 @@ func newBatchFromReader(r io.Reader) Batch {
 
 		b.Location.ByteLen += n
 		// Process the data read from the buffer
-		b.data = append(b.data, buf[:n])
+		b.data.Write(buf[:n])
 	}
 
 	return b
@@ -109,7 +116,7 @@ func (l Location) HasImportID() bool {
 //
 // The caller is responsible for setting up the CountReader and buffered reader,
 // and for skipping any headers before calling this function.
-func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out chan<- Batch, opts scanOptions) error {
+func scan(ctx context.Context, logger Logger, bufferPool *buffer.Pool, counter *CountReader, reader *bufio.Reader, out chan<- Batch, opts scanOptions) error {
 	var rowsRead int64
 
 	batchSize := 20 * 1024 * 1024 // 20 MB batch size
@@ -129,14 +136,7 @@ func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out c
 
 	scanner := makeCSVRowState(quote, escape)
 
-	// We read a continuous stream of []byte from our buffered reader. Rather
-	// than coalesce all of the incoming slices into a single contiguous buffer
-	// (which would have bad memory usage and performance characteristics for
-	// larger CSV datasets, and be wasted anyway as soon as the underlying
-	// Postgres connection divides the data into smaller CopyData chunks), keep
-	// the slices as-is and store them in net.Buffers, which is a convenient
-	// io.Reader abstraction wrapped over a [][]byte.
-	bufs := make(net.Buffers, 0)
+	buf := bufferPool.Get()
 	var bufferedRows int
 
 	// finishedRow is true if the current row has been fully read and counted
@@ -147,13 +147,14 @@ func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out c
 	send := func(byteEnd int) error {
 		select {
 		case out <- newBatch(
-			bufs,
+			bufferPool,
+			buf,
 			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 		):
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		bufs = make(net.Buffers, 0)
+		buf = bufferPool.Get()
 		bufferedRows = 0
 		byteStart = byteEnd
 		return nil
@@ -184,9 +185,10 @@ func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out c
 
 		if len(data) > 0 {
 			byteEnd := counter.Total - reader.Buffered()
-			// Chunk will be bigger than ChunkByteSize if we append the current line. Let's send the data we have int he buffer
+			// Chunk will be bigger than ChunkByteSize if we append the current line. Let's send the data we have in the buffer
 			if byteEnd-byteStart > batchSize {
 				//log.Printf("reached max batch size, sending %d rows", bufferedRows)
+				//logger.Infof("reached max batch size, sending %d rows", bufferedRows)
 				err := send(byteEndBeforeLine)
 				if err != nil {
 					return err
@@ -196,14 +198,12 @@ func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out c
 			finishedRow = false
 			// ReadSlice doesn't make a copy of the data; to avoid an overwrite
 			// on the next call, we need to make one now.
-			buf := make([]byte, len(data))
-			copy(buf, data)
-			bufs = append(bufs, buf)
+			buf.Write(data)
 
 			// Figure out whether we're still inside a quoted value, in which
 			// case the row hasn't ended yet even if we're at the end of a line.
 			// TODO: This may no be a feasible scenario given that we require a full row to be in the buffer.
-			scanner.Scan(buf)
+			scanner.Scan(data)
 			if eol && !scanner.NeedsMore() {
 				finishedRow = true
 				bufferedRows++
@@ -222,7 +222,7 @@ func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out c
 		if err == io.EOF {
 			// if we have data in the buffer and we are not at the end of a row, we need to count the last row
 			// this can happen if the last row is not terminated by a newline
-			if len(bufs) > 0 && !finishedRow {
+			if buf.Len() > 0 && !finishedRow {
 				bufferedRows++
 				rowsRead++
 			}
@@ -232,11 +232,12 @@ func scan(ctx context.Context, counter *CountReader, reader *bufio.Reader, out c
 		}
 	}
 	// Finished reading input, make sure last batch goes out.
-	if len(bufs) > 0 {
+	if buf.Len() > 0 {
 		byteEnd := counter.Total - reader.Buffered()
 		select {
 		case out <- newBatch(
-			bufs,
+			bufferPool,
+			buf,
 			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 		):
 		case <-ctx.Done():

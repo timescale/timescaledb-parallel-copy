@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/timescale/timescaledb-parallel-copy/pkg/buffer"
 	"golang.org/x/exp/rand"
 )
 
@@ -378,8 +379,9 @@ d"
 				i := 0
 				for buf := range rowChan {
 					assert.EqualValues(t, c.expectedRowCount[i], buf.Location.RowCount, "on batch %d", i)
-					actual = append(actual, string(bytes.Join(buf.data, nil)))
+					actual = append(actual, string(bytes.Join(*buf.data.Buffers(), nil)))
 					i++
+					buf.Close()
 				}
 
 				resultChan <- actual
@@ -412,7 +414,12 @@ d"
 				}
 			}
 
-			err := scan(context.Background(), counter, bufferedReader, rowChan, opts)
+			// TODO
+			segmentSize := 256 * 1024
+			segmentCount := 16
+			bufferPool := buffer.NewPool(2, segmentSize, segmentCount)
+
+			err := scan(context.Background(), &noopLogger{}, bufferPool, counter, bufferedReader, rowChan, opts)
 			if err != nil {
 				if c.expectedError == "" {
 					assert.NoError(t, err)
@@ -474,7 +481,9 @@ d"
 				}
 			}
 
-			err := scan(context.Background(), counter, bufferedReader, rowChan, opts)
+			bufferPool := buffer.NewPool(2, 256 * 1024, 16)
+
+			err := scan(context.Background(), &noopLogger{}, bufferPool, counter, bufferedReader, rowChan, opts)
 			if !errors.Is(err, expected) {
 				t.Errorf("Scan() returned unexpected error: %v", err)
 				t.Logf("want: %v", expected)
@@ -595,7 +604,9 @@ func BenchmarkScan(b *testing.B) {
 						}
 					}
 
-					err := scan(context.Background(), counter, bufferedReader, rowChan, opts)
+					bufferPool := buffer.NewPool(2, 256 * 1024, 16)
+
+					err := scan(context.Background(), &noopLogger{}, bufferPool, counter, bufferedReader, rowChan, opts)
 					if err != nil {
 						b.Errorf("Scan() returned unexpected error: %v", err)
 					}

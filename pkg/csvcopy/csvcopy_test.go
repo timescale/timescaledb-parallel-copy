@@ -2024,7 +2024,7 @@ func BenchmarkAllocations(b *testing.B) {
 	workers := 8
 
 	testDataSetRowCount := os.Getenv("TEST_DATASET_ROW_COUNT")
-	rowCount := int64(20_000_000)
+	rowCount := int64(20_000)
 	if testDataSetRowCount != "" {
 		var err error
 		rowCount, err = strconv.ParseInt(testDataSetRowCount, 10, 64)
@@ -2167,4 +2167,9 @@ func BenchmarkBatchByteSize(b *testing.B) {
 			})
 		}
 	}
+}
+
+func TestGenerateRows(t *testing.T) {
+	rows := generateRows(2, 4)
+	fmt.Println(rows)
 }

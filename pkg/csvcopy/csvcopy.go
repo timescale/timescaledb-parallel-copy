@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
+	"github.com/timescale/timescaledb-parallel-copy/pkg/buffer"
 )
 
 const TAB_CHAR_STR = "\\t"
@@ -244,7 +245,11 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		if err := scan(ctx, counter, bufferedReader, batchChan, opts); err != nil {
+		// TODO:
+		segmentSize := 256 * 1024
+		segmentCount := 16
+		bufferPool := buffer.NewPool(1+queueSize+c.workers, segmentSize, segmentCount)
+		if err := scan(ctx, c.logger, bufferPool, counter, bufferedReader, batchChan, opts); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
 			cancel()
 		}
@@ -463,6 +468,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) 
 			if err != nil {
 				handleErr := c.handleCopyError(ctx, dbx, batch, err)
 				if handleErr != nil {
+					batch.Close()
 					return handleErr
 				}
 			}
@@ -478,6 +484,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch) (err error) 
 				took := time.Since(start)
 				fmt.Printf("[BATCH] starting at row %d, took %v, row count %d, byte len %d, row rate %f/sec\n", batch.Location.StartRow, took, batch.Location.RowCount, batch.Location.ByteLen, float64(batch.Location.RowCount)/float64(took.Seconds()))
 			}
+			batch.Close()
 		}
 	}
 }

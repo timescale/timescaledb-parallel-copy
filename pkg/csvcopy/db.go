@@ -63,7 +63,7 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 	defer connx.Close()
 
 	if !batch.Location.HasImportID() {
-		rowCount, err := copyFromLines(ctx, connx.Conn, &batch.data, copyCmd)
+		rowCount, err := copyFromLines(ctx, connx.Conn, batch.data.Reader(), copyCmd)
 		if err != nil {
 			return rowCount, fmt.Errorf("failed to copy from lines %w", err)
 		}
@@ -101,7 +101,7 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 		return 0, fmt.Errorf("failed to insert control row, %w", err)
 	}
 
-	rowCount, err := copyFromLines(ctx, connx.Conn, &batch.data, copyCmd)
+	rowCount, err := copyFromLines(ctx, connx.Conn, batch.data.Reader(), copyCmd)
 	if err != nil {
 		return rowCount, fmt.Errorf("failed to copy from lines %w", err)
 	}
