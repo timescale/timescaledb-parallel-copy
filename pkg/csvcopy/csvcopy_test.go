@@ -2,6 +2,7 @@ package csvcopy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/csv"
 	"fmt"
@@ -1990,10 +1991,10 @@ func TestAtomicityAssurance(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create test batch data
-	csvLines := [][]byte{
+	csvLines := bytes.Join([][]byte{
 		[]byte("42,test,4.2\n"),
 		[]byte("24,data,2.4\n"),
-	}
+	}, []byte(""))
 	seekableData := buffer.NewSeekable(csvLines)
 
 	batch := Batch{

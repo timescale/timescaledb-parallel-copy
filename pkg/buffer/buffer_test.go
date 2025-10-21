@@ -2,17 +2,17 @@ package buffer
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestSeekAndRead(t *testing.T) {
-	data := [][]byte{
-		[]byte("hello"),
-		[]byte(" "),
-		[]byte("world"),
-	}
+	data := []byte("hello world")
 
 	sb := NewSeekable(data)
 
@@ -44,11 +44,7 @@ func TestSeekAndRead(t *testing.T) {
 }
 
 func TestSeekPositions(t *testing.T) {
-	data := [][]byte{
-		[]byte("abc"),
-		[]byte("def"),
-		[]byte("ghi"),
-	}
+	data := []byte("abcdefghi")
 
 	sb := NewSeekable(data)
 
@@ -103,7 +99,7 @@ func TestSeekPositions(t *testing.T) {
 }
 
 func TestSeekErrors(t *testing.T) {
-	data := [][]byte{[]byte("test")}
+	data := []byte("test")
 	sb := NewSeekable(data)
 
 	tests := []struct {
@@ -126,43 +122,8 @@ func TestSeekErrors(t *testing.T) {
 	}
 }
 
-func TestWriteTo(t *testing.T) {
-	data := [][]byte{
-		[]byte("hello"),
-		[]byte(" "),
-		[]byte("world"),
-	}
-
-	sb := NewSeekable(data)
-
-	// Test WriteTo from beginning
-	var buf bytes.Buffer
-	n, err := sb.WriteTo(&buf)
-	if n != 11 || err != nil {
-		t.Errorf("WriteTo() = (%d, %v), want (11, nil)", n, err)
-	}
-	if buf.String() != "hello world" {
-		t.Errorf("WriteTo data = %q, want %q", buf.String(), "hello world")
-	}
-
-	// Test WriteTo after seek
-	_, _ = sb.Seek(6, io.SeekStart) // Start from "world"
-	buf.Reset()
-	n, err = sb.WriteTo(&buf)
-	if n != 5 || err != nil {
-		t.Errorf("WriteTo after seek = (%d, %v), want (5, nil)", n, err)
-	}
-	if buf.String() != "world" {
-		t.Errorf("WriteTo after seek data = %q, want %q", buf.String(), "world")
-	}
-}
-
 func TestPartialReads(t *testing.T) {
-	data := [][]byte{
-		[]byte("abcde"),
-		[]byte("fghij"),
-		[]byte("klmno"),
-	}
+	data := []byte("abcdefghijklmno")
 
 	sb := NewSeekable(data)
 
@@ -191,12 +152,12 @@ func TestPartialReads(t *testing.T) {
 
 func TestRetryScenario(t *testing.T) {
 	// Simulate CSV data that might need retry
-	csvData := [][]byte{
+	csvData := bytes.Join([][]byte{
 		[]byte("id,name,value\n"),
 		[]byte("1,John,100\n"),
 		[]byte("2,Jane,200\n"),
 		[]byte("3,Bob,300\n"),
-	}
+	}, []byte(""))
 
 	sb := NewSeekable(csvData)
 
@@ -239,11 +200,7 @@ func TestRetryScenario(t *testing.T) {
 }
 
 func TestSeekBoundaries(t *testing.T) {
-	data := [][]byte{
-		[]byte("abc"),
-		[]byte("def"),
-		[]byte("ghi"),
-	}
+	data := []byte("abcdefghi")
 
 	sb := NewSeekable(data)
 
@@ -275,7 +232,7 @@ func TestSeekBoundaries(t *testing.T) {
 
 func TestWrite(t *testing.T) {
 	// Test basic write functionality
-	sb := NewSeekable([][]byte{})
+	sb := NewSeekable(make([]byte, 0, 20))
 
 	n, err := sb.Write([]byte("hello"))
 	if n != 5 || err != nil {
@@ -303,7 +260,7 @@ func TestWrite(t *testing.T) {
 }
 
 func TestWriteString(t *testing.T) {
-	sb := NewSeekable([][]byte{})
+	sb := NewSeekable(make([]byte, 0, 20))
 
 	n, err := sb.WriteString("test")
 	if n != 4 || err != nil {
@@ -332,7 +289,7 @@ func TestWriteString(t *testing.T) {
 
 func TestWriteAndSeek(t *testing.T) {
 	// Test writing data, seeking, and reading from different positions
-	sb := NewSeekable([][]byte{})
+	sb := NewSeekable(make([]byte, 0, 20))
 
 	_, _ = sb.Write([]byte("abc"))
 	_, _ = sb.Write([]byte("def"))
@@ -379,8 +336,8 @@ func TestWriteAndSeek(t *testing.T) {
 	}
 }
 
-func TestWriteEmpty(t *testing.T) {
-	sb := NewSeekable([][]byte{})
+func TestWriteEmptySlice(t *testing.T) {
+	sb := NewSeekable(make([]byte, 0, 20))
 
 	// Test writing empty slice
 	n, err := sb.Write([]byte{})
@@ -402,32 +359,29 @@ func TestWriteEmpty(t *testing.T) {
 	}
 }
 
-func TestMixedWriteAndInitialData(t *testing.T) {
-	// Test starting with initial data and then writing more
-	initialData := [][]byte{
-		[]byte("initial"),
-		[]byte(" data"),
-	}
+func TestWriteToEmptyBuffer(t *testing.T) {
+	sb := NewSeekable([]byte{})
 
-	sb := NewSeekable(initialData)
+	n, err := sb.Write([]byte("Hello World"))
+	require.Zero(t, n)
+	require.ErrorIs(t, err, io.ErrShortWrite)
+}
 
-	// Write additional data
-	_, _ = sb.Write([]byte(" plus"))
-	_, _ = sb.Write([]byte(" more"))
+func TestPoolCapacityMaintained(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 100 * time.Millisecond)
+	defer cancel()
 
-	// Read everything
-	_, err := sb.Seek(0, io.SeekStart)
-	if err != nil {
-		t.Errorf("Seek to start failed: %v", err)
-	}
-	buf := make([]byte, 30)
-	n, err := sb.Read(buf)
-	if err != nil && err != io.EOF {
-		t.Errorf("Read error: %v", err)
-	}
+	p := NewPool(1, 1024)
+	_, err := p.Get(ctx)
+	require.NoError(t, err)
+	_, err = p.Get(ctx)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
 
-	expected := "initial data plus more"
-	if string(buf[:n]) != expected {
-		t.Errorf("Read data = %q, want %q", string(buf[:n]), expected)
-	}
+func TestContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	p := NewPool(1, 1024)
+	cancel()
+	_, err := p.Get(ctx)
+	require.ErrorIs(t, err, context.Canceled)
 }

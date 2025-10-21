@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/timescale/timescaledb-parallel-copy/pkg/buffer"
+
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/exp/rand"
 )
@@ -382,6 +384,7 @@ d"
 					data, _ := io.ReadAll(buf.Data)
 					actual = append(actual, string(data))
 					i++
+					buf.Close()
 				}
 
 				resultChan <- actual
@@ -414,7 +417,9 @@ d"
 				}
 			}
 
-			err := scan(context.Background(), noopLoggerFunc, counter, bufferedReader, rowChan, opts)
+			pool := buffer.NewPool(1, bufferSize)
+
+			err := scan(context.Background(), pool, noopLoggerFunc, counter, bufferedReader, rowChan, opts)
 			if err != nil {
 				if c.expectedError == "" {
 					assert.NoError(t, err)
@@ -465,7 +470,8 @@ d"
 			}
 
 			counter := &CountReader{Reader: reader}
-			bufferedReader := bufio.NewReaderSize(counter, 2*1024*1024)
+			bufferSize := 2*1024*1024
+			bufferedReader := bufio.NewReaderSize(counter, bufferSize)
 
 			// Skip headers if needed
 			if opts.Skip > 0 {
@@ -476,7 +482,9 @@ d"
 				}
 			}
 
-			err := scan(context.Background(), noopLoggerFunc, counter, bufferedReader, rowChan, opts)
+			pool := buffer.NewPool(1, bufferSize)
+
+			err := scan(context.Background(), pool, noopLoggerFunc, counter, bufferedReader, rowChan, opts)
 			if !errors.Is(err, expected) {
 				t.Errorf("Scan() returned unexpected error: %v", err)
 				t.Logf("want: %v", expected)
@@ -597,7 +605,9 @@ func BenchmarkScan(b *testing.B) {
 						}
 					}
 
-					err := scan(context.Background(), noopLoggerFunc, counter, bufferedReader, rowChan, opts)
+					pool := buffer.NewPool(10, 1*1024*1024)
+
+					err := scan(context.Background(), pool, noopLoggerFunc, counter, bufferedReader, rowChan, opts)
 					if err != nil {
 						b.Errorf("Scan() returned unexpected error: %v", err)
 					}

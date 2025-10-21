@@ -28,12 +28,18 @@ type scanOptions struct {
 
 // Batch represents an operation to copy data into the DB
 type Batch struct {
+	Pool     *buffer.Pool
 	Data     *buffer.Seekable
 	Location Location
 }
 
-func newBatch(data *buffer.Seekable, location Location) Batch {
+func (b *Batch) Close() {
+	b.Pool.Put(b.Data)
+}
+
+func newBatch(pool *buffer.Pool, data *buffer.Seekable, location Location) Batch {
 	b := Batch{
+		Pool:     pool,
 		Data:     data,
 		Location: location,
 	}
@@ -42,9 +48,7 @@ func newBatch(data *buffer.Seekable, location Location) Batch {
 
 // newBatchFromReader used for testing purposes
 func newBatchFromReader(r io.Reader) Batch {
-	b := Batch{
-		Data: buffer.NewSeekable([][]byte{}),
-	}
+	b := Batch{}
 	buf := make([]byte, 32*1024)
 
 	for {
@@ -112,7 +116,7 @@ func (l Location) HasImportID() bool {
 //
 // The caller is responsible for setting up the CountReader and buffered reader,
 // and for skipping any headers before calling this function.
-func scan(ctx context.Context, logger func(ctx context.Context, msg string, args ...interface{}),
+func scan(ctx context.Context, pool *buffer.Pool, logger func(ctx context.Context, msg string, args ...interface{}),
 	counter *CountReader, reader *bufio.Reader, out chan<- Batch, opts scanOptions) error {
 	var rowsRead int64
 
@@ -133,14 +137,10 @@ func scan(ctx context.Context, logger func(ctx context.Context, msg string, args
 
 	scanner := makeCSVRowState(quote, escape)
 
-	// We read a continuous stream of []byte from our buffered reader. Rather
-	// than coalesce all of the incoming slices into a single contiguous buffer
-	// (which would have bad memory usage and performance characteristics for
-	// larger CSV datasets, and be wasted anyway as soon as the underlying
-	// Postgres connection divides the data into smaller CopyData chunks), keep
-	// the slices as-is and store them in our Seekable buffer, which is a convenient
-	// io.Reader abstraction wrapped over a [][]byte with additional seek functionality.
-	bufs := buffer.NewSeekable([][]byte{})
+	buf, err := pool.Get(ctx)
+	if err != nil {
+		return err
+	}
 	var bufferedRows int
 
 	// finishedRow is true if the current row has been fully read and counted
@@ -151,13 +151,17 @@ func scan(ctx context.Context, logger func(ctx context.Context, msg string, args
 	send := func(byteEnd int) error {
 		select {
 		case out <- newBatch(
-			bufs,
+			pool,
+			buf,
 			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 		):
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		bufs = buffer.NewSeekable([][]byte{})
+		buf, err = pool.Get(ctx)
+		if err != nil {
+			return err
+		}
 		bufferedRows = 0
 		byteStart = byteEnd
 		return nil
@@ -199,7 +203,7 @@ func scan(ctx context.Context, logger func(ctx context.Context, msg string, args
 
 			finishedRow = false
 
-			_, _ = bufs.Write(data) // Write cannot fail, just exists to meet Writer interface
+			_, _ = buf.Write(data) // Write cannot fail because we check that the buffer has capacity
 
 			// Figure out whether we're still inside a quoted value, in which
 			// case the row hasn't ended yet even if we're at the end of a line.
@@ -223,7 +227,7 @@ func scan(ctx context.Context, logger func(ctx context.Context, msg string, args
 		if err == io.EOF {
 			// if we have data in the buffer and we are not at the end of a row, we need to count the last row
 			// this can happen if the last row is not terminated by a newline
-			if bufs.TotalSize() > 0 && !finishedRow {
+			if buf.Len() > 0 && !finishedRow {
 				bufferedRows++
 				rowsRead++
 			}
@@ -233,11 +237,12 @@ func scan(ctx context.Context, logger func(ctx context.Context, msg string, args
 		}
 	}
 	// Finished reading input, make sure last batch goes out.
-	if bufs.HasData() {
+	if buf.HasData() {
 		byteEnd := counter.Total - reader.Buffered()
 		select {
 		case out <- newBatch(
-			bufs,
+			pool,
+			buf,
 			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 		):
 		case <-ctx.Done():
