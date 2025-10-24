@@ -518,7 +518,6 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 				return
 			}
 			err = c.handleBatch(ctx, batch, dbx, copyCmd)
-			batch.Close()
 			if err != nil {
 				return err
 			}
@@ -527,6 +526,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 }
 
 func (c *Copier) handleBatch(ctx context.Context, batch Batch, dbx *sqlx.DB, copyCmd string) error {
+	defer batch.Close()
 	atomic.AddInt64(&c.totalRows, int64(batch.Location.RowCount))
 
 	if c.logBatches {

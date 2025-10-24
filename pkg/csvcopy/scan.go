@@ -28,18 +28,16 @@ type scanOptions struct {
 
 // Batch represents an operation to copy data into the DB
 type Batch struct {
-	Pool     *buffer.Pool
 	Data     *buffer.Seekable
 	Location Location
 }
 
-func (b *Batch) Close() {
-	b.Pool.Put(b.Data)
+func (b Batch) Close() error {
+	return b.Data.Close()
 }
 
-func newBatch(pool *buffer.Pool, data *buffer.Seekable, location Location) Batch {
+func newBatch(data *buffer.Seekable, location Location) Batch {
 	b := Batch{
-		Pool:     pool,
 		Data:     data,
 		Location: location,
 	}
@@ -151,7 +149,6 @@ func scan(ctx context.Context, pool *buffer.Pool, logger func(ctx context.Contex
 	send := func(byteEnd int) error {
 		select {
 		case out <- newBatch(
-			pool,
 			buf,
 			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 		):
@@ -241,7 +238,6 @@ func scan(ctx context.Context, pool *buffer.Pool, logger func(ctx context.Contex
 		byteEnd := counter.Total - reader.Buffered()
 		select {
 		case out <- newBatch(
-			pool,
 			buf,
 			newLocation(opts.ImportID, rowsRead, bufferedRows, opts.Skip, byteStart, byteEnd-byteStart),
 		):

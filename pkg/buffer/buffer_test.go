@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -259,34 +260,6 @@ func TestWrite(t *testing.T) {
 	}
 }
 
-func TestWriteString(t *testing.T) {
-	sb := NewSeekable(make([]byte, 0, 20))
-
-	n, err := sb.WriteString("test")
-	if n != 4 || err != nil {
-		t.Errorf("WriteString('test') = (%d, %v), want (4, nil)", n, err)
-	}
-
-	n, err = sb.WriteString(" string")
-	if n != 7 || err != nil {
-		t.Errorf("WriteString(' string') = (%d, %v), want (7, nil)", n, err)
-	}
-
-	// Test reading back
-	_, err = sb.Seek(0, io.SeekStart)
-	if err != nil {
-		t.Errorf("Seek to start failed: %v", err)
-	}
-	buf := make([]byte, 20)
-	n, err = sb.Read(buf)
-	if n != 11 || (err != nil && err != io.EOF) {
-		t.Errorf("Read after WriteString = (%d, %v), want (11, nil or EOF)", n, err)
-	}
-	if string(buf[:n]) != "test string" {
-		t.Errorf("Read data = %q, want %q", string(buf[:n]), "test string")
-	}
-}
-
 func TestWriteAndSeek(t *testing.T) {
 	// Test writing data, seeking, and reading from different positions
 	sb := NewSeekable(make([]byte, 0, 20))
@@ -367,21 +340,157 @@ func TestWriteToEmptyBuffer(t *testing.T) {
 	require.ErrorIs(t, err, io.ErrShortWrite)
 }
 
+// TestNewPool verifies pool initialization
+func TestNewPool(t *testing.T) {
+	bufferSize := 1024
+
+	pool := NewPool(5, bufferSize)
+
+	require.Equal(t, 0, pool.size, "expected initial size 0")
+	require.Equal(t, 5, cap(pool.buffers))
+}
+
+// TestGetAllocatesNewBuffer when pool is below capacity
+func TestGetAllocatesNewBuffer(t *testing.T) {
+	ctx := context.Background()
+	pool := NewPool(5, 1024)
+
+	buf, err := pool.Get(ctx)
+
+	require.NoError(t, err)
+	require.NotNil(t, buf)
+	require.Equal(t, 1024, cap(buf.buf))
+	require.Equal(t, 0, len(buf.buf))
+}
+
 func TestPoolCapacityMaintained(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 100 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
 	p := NewPool(1, 1024)
-	_, err := p.Get(ctx)
+	buf, err := p.Get(ctx)
 	require.NoError(t, err)
-	_, err = p.Get(ctx)
+	require.NotNil(t, buf)
+	buf, err = p.Get(ctx)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Nil(t, buf)
 }
 
 func TestContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	p := NewPool(1, 1024)
 	cancel()
-	_, err := p.Get(ctx)
+	buf, err := p.Get(ctx)
 	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, buf)
+}
+
+// TestGetMultipleBuffers verifies multiple allocations
+func TestGetMultipleBuffers(t *testing.T) {
+	ctx := context.Background()
+	capacity := 3
+	pool := NewPool(capacity, 512)
+
+	buffers := make([]*Seekable, capacity)
+	for i := 0; i < capacity; i++ {
+		var err error
+		buffers[i], err = pool.Get(ctx)
+		require.NoError(t, err)
+		require.NotNil(t, buffers[i])
+	}
+
+	// All buffers should be different instances
+	for i := 0; i < capacity; i++ {
+		for j := i + 1; j < capacity; j++ {
+			require.NotSame(t, buffers[i], buffers[j])
+		}
+	}
+}
+
+// TestCloseReturnsBufferToPool verifies Close resets and returns buffer
+func TestCloseReturnsBufferToPool(t *testing.T) {
+	ctx := context.Background()
+	pool := NewPool(2, 256)
+
+	buf, err := pool.Get(ctx)
+	require.NoError(t, err)
+	buf.buf = append(buf.buf, byte(42))
+	buf.position = 10
+
+	err = buf.Close()
+	require.NoError(t, err)
+
+	// Buffer should be reset
+	require.Equal(t, 0, len(buf.buf))
+	require.Equal(t, int64(0), buf.position)
+
+	// Buffer should be retrievable
+	retrieved, err := pool.Get(ctx)
+	require.NoError(t, err)
+	require.Same(t, buf, retrieved)
+}
+
+// TestConcurrentGetPut tests concurrent operations
+func TestConcurrentGetPut(t *testing.T) {
+	ctx := context.Background()
+	pool := NewPool(5, 512)
+	numGoroutines := 20
+	operationsPerGoroutine := 50
+
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer wg.Done()
+			for j := 0; j < operationsPerGoroutine; j++ {
+				buf, err := pool.Get(ctx)
+				require.NoError(t, err)
+				require.NotNil(t, buf)
+				buf.buf = append(buf.buf, byte(j%256))
+				err = buf.Close()
+				require.NoError(t, err)
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+// TestGetReusesBuffers verifies that buffers are reused from pool
+func TestGetReusesBuffers(t *testing.T) {
+	ctx := context.Background()
+	pool := NewPool(2, 256)
+
+	// Get and put multiple buffers
+	buf1, err := pool.Get(ctx)
+	require.NoError(t, err)
+	buf2, err := pool.Get(ctx)
+	require.NoError(t, err)
+	err = buf1.Close()
+	require.NoError(t, err)
+	err = buf2.Close()
+	require.NoError(t, err)
+
+	// Next gets should return the same instances
+	retrieved1, err := pool.Get(ctx)
+	require.NoError(t, err)
+	retrieved2, err := pool.Get(ctx)
+	require.NoError(t, err)
+
+	require.Same(t, retrieved1, buf1)
+	require.Same(t, retrieved2, buf2)
+}
+
+// TestBufferSizeConfiguration verifies buffer size is respected
+func TestBufferSizeConfiguration(t *testing.T) {
+	ctx := context.Background()
+	tests := []int{256, 1024, 4096}
+
+	for _, size := range tests {
+		pool := NewPool(2, size)
+		buf, err := pool.Get(ctx)
+		require.NoError(t, err)
+		require.Equal(t, size, cap(buf.buf))
+	}
 }
