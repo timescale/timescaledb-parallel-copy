@@ -1,126 +1,117 @@
-// Package seekablebuffers provides a seekable wrapper around net.Buffers
-// that enables retry functionality for database copy operations.
+// Package buffer provides a pool of seekable buffers.
+// The seekable buffer enables retry functionality for database copy operations.
 package buffer
 
 import (
+	"context"
 	"fmt"
 	"io"
 )
 
-// Buffers contains zero or more runs of bytes to write.
-//
-// On certain machines, for certain types of connections, this is
-// optimized into an OS-specific batch write operation (such as
-// "writev").
+// Pool provides a pool of Seekable buffers.
+// It has a fixed capacity, allocating new Seekable buffers on demand.
+type Pool struct {
+	buffers    chan *Seekable
+	bufferSize int
+	size       int
+}
+
+func NewPool(capacity int, bufferSize int) *Pool {
+	return &Pool{
+		buffers:    make(chan *Seekable, capacity),
+		bufferSize: bufferSize,
+		size:       0,
+	}
+}
+
+// Get returns an item from the pool, if one is available.
+// If the pool has not reached its capacity, a new item is allocated.
+// If no items are available, and the pool is at capacity, it blocks.
+// If the context is cancelled, returns nil and the context's error.
+// To return a Seekable to the pool, call Close on the Seekable.
+func (b *Pool) Get(ctx context.Context) (*Seekable, error) {
+	select {
+	case buf := <-b.buffers:
+		return buf, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+		if b.size < cap(b.buffers) {
+			b.size += 1
+			buf := &Seekable{
+				buf:      make([]byte, 0, b.bufferSize),
+				position: 0,
+				pool:     b,
+			}
+			return buf, nil
+		}
+		select {
+		case buf := <-b.buffers:
+			return buf, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+// put puts an item back in the pool.
+func (b *Pool) put(buf *Seekable) {
+	b.buffers <- buf
+}
+
+// Seekable is a seekable buffer
 type Seekable struct {
-	buf      [][]byte
+	buf      []byte
 	position int64
+	pool     *Pool
 }
 
 var (
-	_ io.WriterTo = (*Seekable)(nil)
-	_ io.Reader   = (*Seekable)(nil)
-	_ io.Writer   = (*Seekable)(nil)
-	_ io.Seeker   = (*Seekable)(nil)
+	_ io.Reader = (*Seekable)(nil)
+	_ io.Writer = (*Seekable)(nil)
+	_ io.Seeker = (*Seekable)(nil)
+	_ io.Closer = (*Seekable)(nil)
 )
 
-func NewSeekable(buf [][]byte) *Seekable {
+func NewSeekable(buf []byte) *Seekable {
 	return &Seekable{
 		buf:      buf,
 		position: 0,
+		pool:     nil,
 	}
 }
 
 func (v *Seekable) HasData() bool {
-	return v.position < v.TotalSize()
+	return v.position < v.Len()
 }
 
-func (v *Seekable) TotalSize() int64 {
-	var size int64
-	for _, b := range v.buf {
-		size += int64(len(b))
-	}
-	return size
+func (v *Seekable) Len() int64 {
+	return int64(len(v.buf))
 }
 
-// WriteTo writes contents of the buffers to w.
-//
-// WriteTo implements [io.WriterTo] for [Buffers].
-//
-// WriteTo modifies the slice v as well as v[i] for 0 <= i < len(v),
-// but does not modify v[i][j] for any i, j.
-func (v *Seekable) WriteTo(w io.Writer) (n int64, err error) {
-	if v.position >= v.TotalSize() {
-		return 0, nil
+// Close closes the buffer, returning it to the pool.
+func (v *Seekable) Close() error {
+	v.position = 0
+	v.buf = v.buf[:0]
+	if v.pool != nil {
+		v.pool.put(v)
 	}
-
-	currentPos := v.position
-
-	for _, buf := range v.buf {
-		bufLen := int64(len(buf))
-		if currentPos >= bufLen {
-			currentPos -= bufLen
-			continue
-		}
-
-		startInBuf := currentPos
-		bytesToWrite := buf[startInBuf:]
-
-		nb, err := w.Write(bytesToWrite)
-		n += int64(nb)
-		if err != nil {
-			v.position += n
-			return n, err
-		}
-		currentPos = 0
-	}
-
-	v.position += n
-	return n, nil
+	return nil
 }
 
 // Read from the buffers.
 //
-// Read implements [io.Reader] for [Buffers].
-//
-// Read modifies the slice v as well as v[i] for 0 <= i < len(v),
-// but does not modify v[i][j] for any i, j.
+// Read implements [io.Reader] for [Seekable].
 func (v *Seekable) Read(p []byte) (n int, err error) {
-	if v.position >= v.TotalSize() {
+	if v.position >= int64(len(v.buf)) {
 		return 0, io.EOF
 	}
 
-	remaining := len(p)
-	currentPos := v.position
+	remaining := min(len(p), len(v.buf)-int(v.position))
 
-	for i, buf := range v.buf {
-		if remaining == 0 {
-			break
-		}
-
-		bufLen := int64(len(buf))
-		if currentPos >= bufLen {
-			currentPos -= bufLen
-			continue
-		}
-
-		startInBuf := currentPos
-		bytesToRead := bufLen - startInBuf
-		if int64(remaining) < bytesToRead {
-			bytesToRead = int64(remaining)
-		}
-
-		copied := copy(p[n:], buf[startInBuf:startInBuf+bytesToRead])
-		n += copied
-		remaining -= copied
-		currentPos = 0
-
-		if i == len(v.buf)-1 && n < len(p) {
-			err = io.EOF
-		}
-	}
-
+	n = copy(p, v.buf[v.position:int(v.position)+remaining])
 	v.position += int64(n)
+
 	return n, err
 }
 
@@ -130,22 +121,21 @@ func (v *Seekable) Write(p []byte) (n int, err error) {
 		return 0, nil
 	}
 
-	// Create a copy of the input data to avoid issues with caller reusing the slice
-	data := make([]byte, len(p))
-	copy(data, p)
+	capacity := min(cap(v.buf)-len(v.buf), len(p))
 
-	v.buf = append(v.buf, data)
-	return len(p), nil
+	n = copy(v.buf[len(v.buf):len(v.buf)+capacity], p)
+	v.buf = v.buf[:len(v.buf)+capacity]
+
+	if len(p) > capacity {
+		return n, io.ErrShortWrite
+	}
+
+	return n, nil
 }
 
-// WriteString appends a string to the buffer
-func (v *Seekable) WriteString(s string) (n int, err error) {
-	return v.Write([]byte(s))
-}
-
-// Seek sets the position for next Read or Write operation
+// Seek sets the position for next Read operation
 func (v *Seekable) Seek(offset int64, whence int) (int64, error) {
-	totalSize := v.TotalSize()
+	totalSize := v.Len()
 
 	var newPos int64
 	switch whence {

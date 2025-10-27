@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/timescale/timescaledb-parallel-copy/pkg/buffer"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -74,7 +76,7 @@ type Copier struct {
 	escapeCharacter   string
 	columns           string
 	workers           int
-	queueSize        int
+	queueSize         int
 	limit             int64
 	bufferSize        int
 	batchByteSize     int
@@ -287,7 +289,8 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	workerWg.Add(1)
 	go func() {
 		defer workerWg.Done()
-		if err := scan(ctx, c.LogInfo, counter, bufferedReader, batchChan, opts); err != nil {
+		pool := buffer.NewPool(1+queueSize+c.workers, c.batchByteSize)
+		if err := scan(ctx, pool, c.LogInfo, counter, bufferedReader, batchChan, opts); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
 			cancel()
 		}
@@ -514,32 +517,41 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 			if !ok {
 				return
 			}
-			atomic.AddInt64(&c.totalRows, int64(batch.Location.RowCount))
-
-			if c.logBatches {
-				c.LogInfo(ctx, "Processing: starting at row %d: rows count %d, byte len %d",
-					batch.Location.StartRow, batch.Location.RowCount, batch.Location.ByteLen)
-			}
-
-			start := time.Now()
-			rows, err := copyFromBatch(ctx, dbx, batch, copyCmd)
+			err = c.handleBatch(ctx, batch, dbx, copyCmd)
 			if err != nil {
-				handleResult, handleErr := c.handleCopyError(ctx, dbx, batch, err)
-				if handleErr != nil {
-					c.LogError(ctx, "Error handler failed for batch %d: %v", batch.Location.StartRow, handleErr)
-					return handleErr
-				}
-				atomic.AddInt64(&c.skippedRows, handleResult.SkippedRows)
-				rows = handleResult.InsertedRows
-			}
-			atomic.AddInt64(&c.insertedRows, rows)
-
-			if c.logBatches {
-				took := time.Since(start)
-				c.LogInfo(ctx, "Processing: starting at row %d, took %v, row count %d, byte len %d, row rate %f/sec", batch.Location.StartRow, took, batch.Location.RowCount, batch.Location.ByteLen, float64(batch.Location.RowCount)/float64(took.Seconds()))
+				return err
 			}
 		}
 	}
+}
+
+func (c *Copier) handleBatch(ctx context.Context, batch Batch, dbx *sqlx.DB, copyCmd string) error {
+	defer batch.Close()
+	atomic.AddInt64(&c.totalRows, int64(batch.Location.RowCount))
+
+	if c.logBatches {
+		c.LogInfo(ctx, "Processing: starting at row %d: rows count %d, byte len %d",
+			batch.Location.StartRow, batch.Location.RowCount, batch.Location.ByteLen)
+	}
+
+	start := time.Now()
+	rows, err := copyFromBatch(ctx, dbx, batch, copyCmd)
+	if err != nil {
+		handleResult, handleErr := c.handleCopyError(ctx, dbx, batch, err)
+		if handleErr != nil {
+			c.LogError(ctx, "Error handler failed for batch %d: %v", batch.Location.StartRow, handleErr)
+			return handleErr
+		}
+		atomic.AddInt64(&c.skippedRows, handleResult.SkippedRows)
+		rows = handleResult.InsertedRows
+	}
+	atomic.AddInt64(&c.insertedRows, rows)
+
+	if c.logBatches {
+		took := time.Since(start)
+		c.LogInfo(ctx, "Processing: starting at row %d, took %v, row count %d, byte len %d, row rate %f/sec", batch.Location.StartRow, took, batch.Location.RowCount, batch.Location.ByteLen, float64(batch.Location.RowCount)/float64(took.Seconds()))
+	}
+	return nil
 }
 
 type HandleCopyErrorResult struct {
