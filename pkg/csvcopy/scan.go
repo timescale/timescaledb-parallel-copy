@@ -118,7 +118,7 @@ func scan(ctx context.Context, pool *buffer.Pool, logger func(ctx context.Contex
 	counter *CountReader, reader *bufio.Reader, out chan<- Batch, opts scanOptions) error {
 	var rowsRead int64
 
-	batchSize := 20 * 1024 * 1024 // 20 MB batch size
+	batchSize := 4 * 1024 * 1024 // 4 MB batch size
 	if opts.BatchByteSize > 0 {
 		batchSize = opts.BatchByteSize
 	}

@@ -88,7 +88,7 @@ func init() {
 	flag.StringVar(&importID, "import-id", "", "ImportID to guarantee idempotency")
 	flag.IntVar(&batchSize, "batch-size", 5000, "Number of rows per insert. It will be limited by batch-byte-size")
 	flag.IntVar(&bufferSize, "buffer-byte-size", 2*1024*1024, "Number of bytes to buffer, it has to be big enough to hold a full row")
-	flag.IntVar(&batchByteSize, "batch-byte-size", 20*1024*1024, "Max number of bytes to send in a batch")
+	flag.IntVar(&batchByteSize, "batch-byte-size", 4*1024*1024, "Max number of bytes to send in a batch")
 	flag.Int64Var(&limit, "limit", 0, "Number of rows to insert overall; 0 means to insert all")
 	flag.IntVar(&workers, "workers", 1, "Number of parallel requests to make")
 	flag.BoolVar(&logBatches, "log-batches", false, "Whether to time individual batches.")
