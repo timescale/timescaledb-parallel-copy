@@ -187,6 +187,19 @@ func (c *Copier) Truncate() (err error) {
 }
 
 func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
+	var supportWg sync.WaitGroup
+	supportCtx, cancelSupportCtx := context.WithCancel(ctx)
+	defer cancelSupportCtx()
+	// Reporting thread
+	if c.reportingPeriod > (0 * time.Second) {
+		c.Logger.Infof("There will be reports every %s", c.reportingPeriod.String())
+		supportWg.Add(1)
+		go func() {
+			defer supportWg.Done()
+			c.report(supportCtx)
+		}()
+	}
+
 	if c.HasImportID() {
 		if err := ensureTransactionTable(ctx, c.connString); err != nil {
 			return Result{}, fmt.Errorf("failed to ensure transaction table, %w", err)
@@ -253,19 +266,6 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 			c.LogInfo(workerCtx, "stop worker")
 		}(i)
 
-	}
-
-	var supportWg sync.WaitGroup
-	supportCtx, cancelSupportCtx := context.WithCancel(ctx)
-	defer cancelSupportCtx()
-	// Reporting thread
-	if c.reportingPeriod > (0 * time.Second) {
-		c.Logger.Infof("There will be reports every %s", c.reportingPeriod.String())
-		supportWg.Add(1)
-		go func() {
-			defer supportWg.Done()
-			c.report(supportCtx)
-		}()
 	}
 
 	opts := scanOptions{
