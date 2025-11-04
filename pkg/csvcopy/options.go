@@ -314,7 +314,7 @@ func WithBatchErrorHandler(handler BatchErrorHandler) Option {
 // - The batch size will be the same
 //
 // If those expectation are not met, the behaviour of the tool is not specified and
-// will provably end up inserting duplicate records.
+// will probably end up inserting duplicate records.
 func WithImportID(id string) Option {
 	return func(c *Copier) error {
 		if id == "" {
