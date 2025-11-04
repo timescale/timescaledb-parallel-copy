@@ -1405,7 +1405,7 @@ func TestTransactionFailureRetry(t *testing.T) {
 		_, err = connx.ExecContext(ctx, "create table public.metrics (device_id int, label text, value float8)")
 		require.NoError(t, err)
 
-		// To force a failure, the best way is to use a bad CSV file. In real life scenario this will provably be caused by
+		// To force a failure, the best way is to use a bad CSV file. In real life scenario this will probably be caused by
 		// temporal database connection errors.
 		// The goal is to test that failed transactions are retried.
 		// Create a temporary CSV file
