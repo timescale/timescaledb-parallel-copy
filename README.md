@@ -377,7 +377,7 @@ $ timescaledb-parallel-copy --connection $DATABASE_URL --table metrics --file da
 
 This uses PostgreSQL's `ON CONFLICT DO NOTHING` clause to ignore rows that would violate unique constraints, allowing the import to continue with just the non-duplicate data.
 
-Note that this statement is not allowed within a `COPY FROM`. The tool will fallback to moving your data into a temporal table and running `INSERT INTO ... SELECT * FROM ... ON CONFLICT DO NOTHING`.
+Note that this statement is not allowed within a `COPY FROM`. The tool will fallback to moving your data into a temporary table and running `INSERT INTO ... SELECT * FROM ... ON CONFLICT DO NOTHING`.
 
 This flag is intended to detect real duplicates and not incremental changes to rows. This means it is safe to use this setting is you expect your data to have duplicate rows, but it is not ok to use this as an ingestion pipeline where you expect updates for the same unique constraint.
 

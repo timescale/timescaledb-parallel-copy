@@ -38,15 +38,15 @@ func WithConflictHandlerNext(next csvcopy.BatchErrorHandler) ConflictHandlerOpti
 }
 
 // BatchConflictHandler handles unique constraint violations during batch processing
-// by creating temporal tables and using ON CONFLICT DO NOTHING to skip duplicates.
+// by creating temporary tables and using ON CONFLICT DO NOTHING to skip duplicates.
 // This allows CSV imports to continue processing even when duplicate rows are encountered.
 //
 // The handler works by:
 // 1. Detecting PostgreSQL unique constraint violations (error code 23505)
-// 2. Creating a temporal table with the same structure as the destination
-// 3. Copying the batch data to the temporal table
+// 2. Creating a temporary table with the same structure as the destination
+// 3. Copying the batch data to the temporary table
 // 4. Using INSERT ... ON CONFLICT DO NOTHING to transfer only non-duplicate rows
-// 5. Cleaning up the temporal table (automatic with PostgreSQL)
+// 5. Cleaning up the temporary table (automatic with PostgreSQL)
 //
 // If next is provided, non-unique-constraint errors are forwarded to it.
 func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHandler {
@@ -82,36 +82,36 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 			return csvcopy.NewErrStop(fmt.Errorf("failed to seek to start of batch data, %w", err))
 		}
 
-		// Create a temporal table with random name (automatically cleaned up by PostgreSQL)
+		// Create a temporary table with random name (automatically cleaned up by PostgreSQL)
 		randomSuffix := generateRandomTableSuffix()
-		temporalTableName := fmt.Sprintf("tmp_batch_%s", randomSuffix)
+		temporaryTableName := fmt.Sprintf("tmp_batch_%s", randomSuffix)
 
-		c.LogInfo(ctx, "BatchConflictHandler: Creating temporal table %s", temporalTableName)
-		_, err = db.ExecContext(ctx, fmt.Sprintf("/* Worker-%d */ CREATE TEMPORARY TABLE %s (LIKE %s INCLUDING DEFAULTS)", csvcopy.GetWorkerIDFromContext(ctx), temporalTableName, c.GetFullTableName()))
+		c.LogInfo(ctx, "BatchConflictHandler: Creating temporary table %s", temporaryTableName)
+		_, err = db.ExecContext(ctx, fmt.Sprintf("/* Worker-%d */ CREATE TEMPORARY TABLE %s (LIKE %s INCLUDING DEFAULTS)", csvcopy.GetWorkerIDFromContext(ctx), temporaryTableName, c.GetFullTableName()))
 		if err != nil {
-			return csvcopy.NewErrStop(fmt.Errorf("failed to create temporal table %s, %w", temporalTableName, err))
+			return csvcopy.NewErrStop(fmt.Errorf("failed to create temporary table %s, %w", temporaryTableName, err))
 		}
 
-		// Create copy command for temporal table
-		tempCopyCmd := strings.Replace(c.CopyCmdWithContext(ctx), c.GetFullTableName(), temporalTableName, 1)
+		// Create copy command for temporary table
+		tempCopyCmd := strings.Replace(c.CopyCmdWithContext(ctx), c.GetFullTableName(), temporaryTableName, 1)
 		rows, err := csvcopy.CopyFromLines(ctx, db.Conn, batch.Data, tempCopyCmd)
 		if err != nil {
 			return csvcopy.NewErrStop(fmt.Errorf("failed to copy from lines %w", err))
 		}
 
-		c.LogInfo(ctx, "BatchConflictHandler: Copied %d rows to temporal table %s", rows, temporalTableName)
+		c.LogInfo(ctx, "BatchConflictHandler: Copied %d rows to temporary table %s", rows, temporaryTableName)
 
 		// Insert data using ON CONFLICT DO NOTHING to skip duplicates
-		insertSQL := fmt.Sprintf("/* Worker-%d */ INSERT INTO %s SELECT * FROM %s ON CONFLICT DO NOTHING", csvcopy.GetWorkerIDFromContext(ctx), c.GetFullTableName(), temporalTableName)
+		insertSQL := fmt.Sprintf("/* Worker-%d */ INSERT INTO %s SELECT * FROM %s ON CONFLICT DO NOTHING", csvcopy.GetWorkerIDFromContext(ctx), c.GetFullTableName(), temporaryTableName)
 		result, err := db.ExecContext(ctx, insertSQL)
 		if err != nil {
-			return csvcopy.NewErrStop(fmt.Errorf("failed to insert from temporal table %s to %s: %w", temporalTableName, c.GetFullTableName(), err))
+			return csvcopy.NewErrStop(fmt.Errorf("failed to insert from temporary table %s to %s: %w", temporaryTableName, c.GetFullTableName(), err))
 		}
 		insertedRows, _ := result.RowsAffected()
 
-		c.LogInfo(ctx, "BatchConflictHandler: Processed %d rows from temporal table %s to %s", insertedRows, temporalTableName, c.GetFullTableName())
+		c.LogInfo(ctx, "BatchConflictHandler: Processed %d rows from temporary table %s to %s", insertedRows, temporaryTableName, c.GetFullTableName())
 
-		// No need to drop temporal table - PostgreSQL automatically cleans it up
+		// No need to drop temporary table - PostgreSQL automatically cleans it up
 
 		return csvcopy.HandleBatchErrorResult{
 			Continue:     true,

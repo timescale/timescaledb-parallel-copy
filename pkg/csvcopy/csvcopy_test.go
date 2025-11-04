@@ -1406,7 +1406,7 @@ func TestTransactionFailureRetry(t *testing.T) {
 		require.NoError(t, err)
 
 		// To force a failure, the best way is to use a bad CSV file. In real life scenario this will probably be caused by
-		// temporal database connection errors.
+		// temporary database connection errors.
 		// The goal is to test that failed transactions are retried.
 		// Create a temporary CSV file
 		badFile, err := os.CreateTemp("", "example")
