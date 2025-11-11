@@ -173,7 +173,7 @@ func scan(ctx context.Context, pool *buffer.Pool, logger func(ctx context.Contex
 		switch err {
 		case bufio.ErrBufferFull:
 			// If we hit buffer full, we do not have enough data to read a full row
-			return fmt.Errorf("reading lines, %w. you should probably increase batch size", err)
+			return fmt.Errorf("buffer of size %d too small for row, you should probably increase batch size: %w", reader.Size(), err)
 
 		case io.EOF:
 			// Also fine, but unlike ErrBufferFull we won't have another

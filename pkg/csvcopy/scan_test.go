@@ -304,7 +304,7 @@ d"
 			size:          2,
 			batchSize:     1024,
 			bufferSize:    2048,
-			expectedError: "you should probably increase batch size",
+			expectedError: "buffer of size 2048 too small for row, you should probably increase batch size",
 		},
 		{
 			name: "batch size is hit before line limit",
