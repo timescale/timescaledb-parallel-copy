@@ -227,6 +227,14 @@ func WithSchemaName(schema string) Option {
 	}
 }
 
+// WithDisableDirectCompress disable the use of Direct Compress
+func WithDisableDirectCompress(disableDirectCompress bool) Option {
+	return func(c *Copier) error {
+		c.disableDirectCompress = disableDirectCompress
+		return nil
+	}
+}
+
 func NewErrContinue(err error) HandleBatchErrorResult {
 	return HandleBatchErrorResult{
 		Continue:     true,
