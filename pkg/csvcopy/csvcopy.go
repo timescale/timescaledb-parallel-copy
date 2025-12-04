@@ -90,6 +90,7 @@ type Copier struct {
 	idempotencyWindow time.Duration
 	columnMapping     ColumnsMapping
 	useFileHeaders    HeaderHandling
+	disableDirectCompress bool
 
 	// Rows that are inserted in the database by this copier instance
 	insertedRows int64
@@ -131,25 +132,26 @@ func NewCopier(
 		tableName:  tableName,
 
 		// Defaults
-		schemaName:        "public",
-		Logger:            &noopLogger{},
-		copyOptions:       "CSV",
-		splitCharacter:    ",",
-		quoteCharacter:    "",
-		escapeCharacter:   "",
-		columns:           "",
-		workers:           1,
-		queueSize:         0,
-		limit:             0,
-		bufferSize:        2 * 1024 * 1024,
-		batchByteSize:     4 * 1024 * 1024,
-		batchSize:         5000,
-		logBatches:        false,
-		reportingPeriod:   0,
-		verbose:           false,
-		skip:              0,
-		importID:          "",
-		idempotencyWindow: 28 * 24 * time.Hour, // 4 weeks
+		schemaName:           "public",
+		Logger:               &noopLogger{},
+		copyOptions:          "CSV",
+		splitCharacter:       ",",
+		quoteCharacter:        "",
+		escapeCharacter:       "",
+		columns:               "",
+		workers:               1,
+		queueSize:             0,
+		limit:                 0,
+		bufferSize:            2 * 1024 * 1024,
+		batchByteSize:         4 * 1024 * 1024,
+		batchSize:             5000,
+		logBatches:            false,
+		reportingPeriod:       0,
+		verbose:               false,
+		skip:                  0,
+		importID:              "",
+		idempotencyWindow:     28 * 24 * time.Hour, // 4 weeks
+		disableDirectCompress: false,
 	}
 
 	for _, o := range options {
@@ -178,6 +180,9 @@ func (c *Copier) Truncate() (err error) {
 	defer func() {
 		err = dbx.Close()
 	}()
+	if c.verbose {
+		c.LogInfo(context.TODO(), fmt.Sprintf("Truncating table %s", c.GetFullTableName()))
+	}
 	_, err = dbx.Exec(fmt.Sprintf("TRUNCATE %s", c.GetFullTableName()))
 	if err != nil {
 		return fmt.Errorf("failed to truncate table: %w", err)
@@ -502,6 +507,16 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 		return err
 	}
 	defer dbx.Close()
+
+	if c.verbose {
+		c.LogInfo(ctx, "connected to service")
+		c.LogInfo(ctx, fmt.Sprintf("setting direct compress to '%t' for the session", !c.disableDirectCompress))
+	}
+
+	// set Direct Compress GUCs for session 
+	if _, err := dbx.Exec(fmt.Sprintf("SET timescaledb.enable_direct_compress_copy=%t", !c.disableDirectCompress)); err != nil {
+    	return err
+	}
 
 	copyCmd := c.CopyCmdWithContext(ctx)
 	c.LogInfo(ctx, "Copy command: %s", copyCmd)

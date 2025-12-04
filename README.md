@@ -206,6 +206,8 @@ Usage of timescaledb-parallel-copy:
         Additional options to pass to COPY (e.g., NULL 'NULL') (default "CSV")
   -db-name string
         (deprecated) Database where the destination table exists
+  -disable-direct-compress
+        Do not use direct compress to write data to TimescaleDB
   -escape character
         The ESCAPE character to use during COPY (default '"')
   -file string
