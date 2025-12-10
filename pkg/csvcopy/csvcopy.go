@@ -91,8 +91,8 @@ type Copier struct {
 	columnMapping     ColumnsMapping
 	useFileHeaders    HeaderHandling
 
-	disableDirectCompress   bool
-	enableClientSideSorting bool
+	directCompress    bool
+	clientSideSorting bool
 
 	// Rows that are inserted in the database by this copier instance
 	insertedRows int64
@@ -134,27 +134,27 @@ func NewCopier(
 		tableName:  tableName,
 
 		// Defaults
-		schemaName:             "public",
-		Logger:                 &noopLogger{},
-		copyOptions:            "CSV",
-		splitCharacter:         ",",
-		quoteCharacter:          "",
-		escapeCharacter:         "",
-		columns:                 "",
-		workers:                 1,
-		queueSize:               0,
-		limit:                   0,
-		bufferSize:              2 * 1024 * 1024,
-		batchByteSize:           4 * 1024 * 1024,
-		batchSize:               5000,
-		logBatches:              false,
-		reportingPeriod:         0,
-		verbose:                 false,
-		skip:                    0,
-		importID:                "",
-		idempotencyWindow:       28 * 24 * time.Hour, // 4 weeks
-		disableDirectCompress:   false,
-		enableClientSideSorting: false,
+		schemaName:        "public",
+		Logger:            &noopLogger{},
+		copyOptions:       "CSV",
+		splitCharacter:    ",",
+		quoteCharacter:    "",
+		escapeCharacter:   "",
+		columns:           "",
+		workers:           1,
+		queueSize:         0,
+		limit:             0,
+		bufferSize:        2 * 1024 * 1024,
+		batchByteSize:     4 * 1024 * 1024,
+		batchSize:         5000,
+		logBatches:        false,
+		reportingPeriod:   0,
+		verbose:           false,
+		skip:              0,
+		importID:          "",
+		idempotencyWindow: 28 * 24 * time.Hour, // 4 weeks
+		directCompress:    false,
+		clientSideSorting: false,
 	}
 
 	for _, o := range options {
@@ -513,16 +513,16 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 
 	if c.verbose {
 		c.LogInfo(ctx, "connected to service")
-		c.LogInfo(ctx, fmt.Sprintf("setting direct compress to '%t' for the session", !c.disableDirectCompress))
-		c.LogInfo(ctx, fmt.Sprintf("setting client side sorting to '%t' for the session", c.enableClientSideSorting))
+		c.LogInfo(ctx, fmt.Sprintf("setting direct compress to '%t' for the session", !c.directCompress))
+		c.LogInfo(ctx, fmt.Sprintf("setting client side sorting to '%t' for the session", c.clientSideSorting))
 	}
 
 	// set Direct Compress GUCs for session 
-	if _, err := dbx.Exec(fmt.Sprintf("SET timescaledb.enable_direct_compress_copy=%t", !c.disableDirectCompress)); err != nil {
+	if _, err := dbx.Exec(fmt.Sprintf("SET timescaledb.enable_direct_compress_copy=%t", !c.directCompress)); err != nil {
     	return err
 	}
 	// set Direct Compress's client side sorting GUCs for session
-	if _, err := dbx.Exec(fmt.Sprintf("SET timescaledb.enable_direct_compress_copy_client_sorted=%t", c.enableClientSideSorting)); err != nil {
+	if _, err := dbx.Exec(fmt.Sprintf("SET timescaledb.enable_direct_compress_copy_client_sorted=%t", c.clientSideSorting)); err != nil {
     	return err
 	}
 
