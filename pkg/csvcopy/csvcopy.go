@@ -91,6 +91,9 @@ type Copier struct {
 	columnMapping     ColumnsMapping
 	useFileHeaders    HeaderHandling
 
+	directCompress    bool
+	clientSideSorting bool
+
 	// Rows that are inserted in the database by this copier instance
 	insertedRows int64
 	// Rows that are skipped because they were already processed
@@ -150,6 +153,8 @@ func NewCopier(
 		skip:              0,
 		importID:          "",
 		idempotencyWindow: 28 * 24 * time.Hour, // 4 weeks
+		directCompress:    false,
+		clientSideSorting: false,
 	}
 
 	for _, o := range options {
@@ -178,6 +183,9 @@ func (c *Copier) Truncate() (err error) {
 	defer func() {
 		err = dbx.Close()
 	}()
+	if c.verbose {
+		c.LogInfo(context.TODO(), fmt.Sprintf("Truncating table %s", c.GetFullTableName()))
+	}
 	_, err = dbx.Exec(fmt.Sprintf("TRUNCATE %s", c.GetFullTableName()))
 	if err != nil {
 		return fmt.Errorf("failed to truncate table: %w", err)
@@ -502,6 +510,21 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 		return err
 	}
 	defer dbx.Close()
+
+	if c.verbose {
+		c.LogInfo(ctx, "connected to service")
+		c.LogInfo(ctx, fmt.Sprintf("setting direct compress to '%t' for the session", !c.directCompress))
+		c.LogInfo(ctx, fmt.Sprintf("setting client side sorting to '%t' for the session", c.clientSideSorting))
+	}
+
+	// set Direct Compress GUCs for session 
+	if _, err := dbx.Exec(fmt.Sprintf("SET timescaledb.enable_direct_compress_copy=%t", !c.directCompress)); err != nil {
+    	return err
+	}
+	// set Direct Compress's client side sorting GUCs for session
+	if _, err := dbx.Exec(fmt.Sprintf("SET timescaledb.enable_direct_compress_copy_client_sorted=%t", c.clientSideSorting)); err != nil {
+    	return err
+	}
 
 	copyCmd := c.CopyCmdWithContext(ctx)
 	c.LogInfo(ctx, "Copy command: %s", copyCmd)

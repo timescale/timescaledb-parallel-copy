@@ -20,7 +20,7 @@ import (
 
 const (
 	binName    = "timescaledb-parallel-copy"
-	version    = "v0.10.0"
+	version    = "v0.11.0"
 	tabCharStr = "\\t"
 )
 
@@ -59,6 +59,9 @@ var (
 	onConflictDoNothing bool
 
 	dbName string
+
+	directCompress    bool
+	clientSideSorting bool
 )
 
 // Parse args
@@ -98,6 +101,9 @@ func init() {
 	flag.BoolVar(&onConflictDoNothing, "on-conflict-do-nothing", false, "Skip duplicate rows on unique constraint violations")
 
 	flag.BoolVar(&showVersion, "version", false, "Show the version of this tool")
+
+	flag.BoolVar(&directCompress, "disable-direct-compress", false, "Do not use direct compress to write data to TimescaleDB")
+	flag.BoolVar(&clientSideSorting, "enable-client-side-sorting", false, "Guaranteed data order in place on the client side")
 
 	flag.Parse()
 }
@@ -181,6 +187,13 @@ func main() {
 
 	if skipHeader {
 		opts = append(opts, csvcopy.WithSkipHeader(true))
+	}
+
+	if directCompress {
+		opts = append(opts, csvcopy.WithDirectCompress(true))
+	}
+	if clientSideSorting {
+		opts = append(opts, csvcopy.WithClientSideSorting(true))
 	}
 
 	copier, err := csvcopy.NewCopier(
