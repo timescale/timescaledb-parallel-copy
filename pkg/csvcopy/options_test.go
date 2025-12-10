@@ -195,6 +195,15 @@ func TestOptionsMutualExclusivity(t *testing.T) {
 			},
 			expectError: false,
 		},
+		{
+			name: "WithDisableDirectCompress + EnableClientSideSorting should not work",
+			options: []Option{
+				WithDisableDirectCompress(true),
+				WithEnableClientSideSorting(true),
+			},
+			expectError:   true,
+			errorContains: "Direct Compress can not be disabled in combination with enabled client side sorting.",
+		},
 	}
 
 	for _, tt := range tests {
