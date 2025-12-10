@@ -60,7 +60,8 @@ var (
 
 	dbName string
 
-	disableDirectCompress bool
+	disableDirectCompress   bool
+	enableClientSideSorting bool
 )
 
 // Parse args
@@ -102,6 +103,7 @@ func init() {
 	flag.BoolVar(&showVersion, "version", false, "Show the version of this tool")
 
 	flag.BoolVar(&disableDirectCompress, "disable-direct-compress", false, "Do not use direct compress to write data to TimescaleDB")
+	flag.BoolVar(&enableClientSideSorting, "enable-client-side-sorting", false, "Guaranteed data order in place on the client side")
 
 	flag.Parse()
 }
@@ -189,6 +191,9 @@ func main() {
 
 	if disableDirectCompress {
 		opts = append(opts, csvcopy.WithDisableDirectCompress(true))
+	}
+	if enableClientSideSorting {
+		opts = append(opts, csvcopy.WithEnableClientSideSorting(true))
 	}
 
 	copier, err := csvcopy.NewCopier(
