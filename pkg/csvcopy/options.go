@@ -255,6 +255,20 @@ func WithWindows1252Handling(windows1252Handling bool) Option {
 	}
 }
 
+func WithRetryOnRecoverableError(retryOnRecoverableError bool) Option {
+	return func(c *Copier) error {
+		c.retryOnRecoverableError = retryOnRecoverableError
+		return nil
+	}
+}
+
+func WithRetryTimeout(retryTimeout time.Duration) Option {
+	return func(c *Copier) error {
+		c.retryTimeout = retryTimeout
+		return nil
+	}
+}
+
 func NewErrContinue(err error) HandleBatchErrorResult {
 	return HandleBatchErrorResult{
 		Continue:     true,

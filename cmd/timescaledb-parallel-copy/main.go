@@ -64,6 +64,9 @@ var (
 	clientSideSorting bool
 
 	windows1252HandlingDisabled bool
+
+	noRetry bool
+	retryTimeout time.Duration
 )
 
 // Parse args
@@ -108,6 +111,9 @@ func init() {
 	flag.BoolVar(&clientSideSorting, "enable-client-side-sorting", false, "Guaranteed data order in place on the client side")
 
 	flag.BoolVar(&windows1252HandlingDisabled, "disable-windows-1252-handling", false, "Disable automatic encoding handling")
+
+	flag.BoolVar(&noRetry, "no-retry", false, "Disable retrying on recoverable errors")
+	flag.DurationVar(&retryTimeout, "retry-timeout", 5*time.Minute, "Abort retrying recoverable errors after this duration is elapsed")
 
 	flag.Parse()
 }
@@ -201,6 +207,9 @@ func main() {
 	}
 
 	opts = append(opts, csvcopy.WithWindows1252Handling(!windows1252HandlingDisabled))
+
+	opts = append(opts, csvcopy.WithRetryOnRecoverableError(!noRetry))
+	opts = append(opts, csvcopy.WithRetryTimeout(retryTimeout))
 
 	copier, err := csvcopy.NewCopier(
 		postgresConnect,
