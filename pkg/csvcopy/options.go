@@ -248,6 +248,13 @@ func WithClientSideSorting(clientSideSorting bool) Option {
 	}
 }
 
+func WithRetryOnRecoverableError(retryOnRecoverableError bool) Option {
+	return func(c *Copier) error {
+		c.retryOnRecoverableError = retryOnRecoverableError
+		return nil
+	}
+}
+
 func NewErrContinue(err error) HandleBatchErrorResult {
 	return HandleBatchErrorResult{
 		Continue:     true,

@@ -62,6 +62,8 @@ var (
 
 	directCompress    bool
 	clientSideSorting bool
+
+	disableRetryOnRecoverableError bool
 )
 
 // Parse args
@@ -104,6 +106,8 @@ func init() {
 
 	flag.BoolVar(&directCompress, "disable-direct-compress", false, "Do not use direct compress to write data to TimescaleDB")
 	flag.BoolVar(&clientSideSorting, "enable-client-side-sorting", false, "Guaranteed data order in place on the client side")
+
+	flag.BoolVar(&disableRetryOnRecoverableError, "disable-retry-on-recoverable-error", false, "Disable retrying when recoverable errors are encountered")
 
 	flag.Parse()
 }
@@ -195,6 +199,8 @@ func main() {
 	if clientSideSorting {
 		opts = append(opts, csvcopy.WithClientSideSorting(true))
 	}
+
+	opts = append(opts, csvcopy.WithRetryOnRecoverableError(!disableRetryOnRecoverableError))
 
 	copier, err := csvcopy.NewCopier(
 		postgresConnect,
