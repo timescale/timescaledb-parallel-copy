@@ -102,6 +102,9 @@ type Copier struct {
 	totalRows int64
 
 	failHandler BatchErrorHandler
+
+	windows1252Handling bool
+	useWindows1252 atomic.Bool
 }
 
 // LogInfo logs a message with worker ID extracted from context if available
@@ -155,6 +158,7 @@ func NewCopier(
 		idempotencyWindow: 28 * 24 * time.Hour, // 4 weeks
 		directCompress:    false,
 		clientSideSorting: false,
+		windows1252Handling: false,
 	}
 
 	for _, o := range options {
@@ -558,7 +562,16 @@ func (c *Copier) handleBatch(ctx context.Context, batch Batch, dbx *sqlx.DB, cop
 	}
 
 	start := time.Now()
+
+	// Check if we're in Windows-1252 mode
+	if c.useWindows1252.Load() {
+		_, err := dbx.Exec("SET CLIENT_ENCODING TO 'WIN1252';")
+		if err != nil {
+			return err
+		}
+	}
 	rows, err := copyFromBatch(ctx, dbx, batch, copyCmd)
+
 	if err != nil {
 		handleResult, handleErr := c.handleCopyError(ctx, dbx, batch, err)
 		if handleErr != nil {
@@ -608,6 +621,42 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 			SkippedRows:  0,
 		}, nil
 
+	}
+
+	// Check if this is an encoding error
+	if isEncodingError(copyErr) && c.windows1252Handling {
+		isUtf8, err := serverEncodingIsUTF8(ctx, db)
+		if err != nil {
+			return HandleCopyErrorResult{}, err
+		}
+		if !isUtf8 {
+			return HandleCopyErrorResult{}, copyErr
+		}
+		c.LogInfo(ctx, "Encoding error detected in batch %s, switching to Windows-1252 mode", batch.Location)
+
+		// Set global flag so all workers switch for subsequent batches
+		c.useWindows1252.Store(true)
+
+		_, err = db.Exec("SET CLIENT_ENCODING TO 'WIN1252'")
+		if err != nil {
+			return HandleCopyErrorResult{}, err
+		}
+
+		// Retry COPY
+		_, err = batch.Data.Seek(0, 0)
+		if err != nil {
+			return HandleCopyErrorResult{}, err
+		}
+		rows, err := copyFromBatch(ctx, db, batch, c.CopyCmdWithContext(ctx))
+		if err != nil {
+			// Conversion didn't help, propagate error
+			return HandleCopyErrorResult{}, fmt.Errorf("error importing batch: %w", err)
+		}
+
+		return HandleCopyErrorResult{
+			InsertedRows: rows,
+			SkippedRows:  0,
+		}, nil
 	}
 
 	connx, err := db.Connx(ctx)
@@ -688,6 +737,20 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 		SkippedRows:  failHandlerError.SkippedRows,
 	}, nil
 
+}
+
+func serverEncodingIsUTF8(ctx context.Context, db *sqlx.DB) (isUtf8 bool, err error) {
+	rows, err := db.QueryxContext(ctx, "SELECT current_setting('server_encoding', true) = 'UTF8';")
+	if err != nil {
+		return isUtf8, err
+	}
+	defer rows.Close()
+	rows.Next()
+	err = rows.Scan(&isUtf8)
+	if err != nil {
+		return isUtf8, err
+	}
+	return isUtf8, nil
 }
 
 func isTemporaryError(err error) bool {
@@ -786,4 +849,14 @@ func (c ColumnsMapping) Get(header string) (string, bool) {
 type ColumnMapping struct {
 	CSVColumnName      string // CSV column name from header
 	DatabaseColumnName string // Database column name for COPY statement
+}
+
+// isEncodingError checks if error is a Postgres encoding error
+func isEncodingError(err error) bool {
+	var pgerr *pgconn.PgError
+	if !errors.As(err, &pgerr) {
+		return false
+	}
+	// Postgres error code 22021 = "character_not_in_repertoire"
+	return pgerr.Code == "22021"
 }
