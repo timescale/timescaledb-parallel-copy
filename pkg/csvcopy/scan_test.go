@@ -384,7 +384,7 @@ d"
 					data, _ := io.ReadAll(buf.Data)
 					actual = append(actual, string(data))
 					i++
-					buf.Close()
+					buf.Close() //nolint:errcheck
 				}
 
 				resultChan <- actual
