@@ -235,6 +235,140 @@ func TestWriteDataToCSVWithHeader(t *testing.T) {
 	require.False(t, tableExists, "Table timescaledb_parallel_copy.transactions exists")
 }
 
+func TestWriteWindows1252EncodedDataWithHeader(t *testing.T) {
+	cases := []struct{
+		name string
+		windows1252Handling bool
+		errorContains string
+	} {
+		{
+			name: "WithWindows1252Handling off",
+			windows1252Handling: false,
+			errorContains: "invalid byte sequence for encoding \"UTF8\"",
+		},
+		{
+			name: "WithWindows1252Handling on",
+			windows1252Handling: true,
+			errorContains: "",
+		},
+	}
+
+	ctx := context.Background()
+
+	pgContainer, err := postgres.Run(ctx,
+		"postgres:15.3-alpine",
+		postgres.WithDatabase("test-db"),
+		postgres.WithUsername("postgres"),
+		postgres.WithPassword("postgres"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).WithStartupTimeout(5*time.Second)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		if err := pgContainer.Terminate(ctx); err != nil {
+			t.Fatalf("failed to terminate pgContainer: %s", err)
+		}
+	})
+
+	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	require.NoError(t, err)
+
+	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
+	require.NoError(t, err)
+	defer db.Close()
+
+	connx, err := db.Connx(ctx)
+	require.NoError(t, err)
+	defer connx.Close()
+
+	// Create table with text columns
+	query := `CREATE TABLE "public"."users" (
+		"name" text,
+		"city" text,
+		"description" text
+	);`
+	_, err = connx.ExecContext(ctx, query)
+	require.NoError(t, err)
+
+	// Create a temporary CSV file
+	tmpfile, err := os.CreateTemp("", "example")
+	require.NoError(t, err)
+	defer os.Remove(tmpfile.Name())
+
+	latin1Data := []byte("name,city,description\nJos\xe9,S\xe3o Paulo,caf\xe9\nM\xfcller,M\xfcnchen,\xdcbung\nFran\xe7ois,Montr\xe9al,na\xefve\n")
+
+	_, err = tmpfile.Write(latin1Data)
+	require.NoError(t, err)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			copier, err := NewCopier(
+				connStr,
+				"users",
+				WithColumns("name,city,description"),
+				WithSkipHeader(true),
+				WithWindows1252Handling(tc.windows1252Handling),
+			)
+			require.NoError(t, err)
+
+			reader, err := os.Open(tmpfile.Name())
+			require.NoError(t, err)
+			r, err := copier.Copy(context.Background(), reader)
+			if tc.errorContains != "" {
+				require.ErrorContains(t, err, tc.errorContains)
+				return
+			} else {
+				require.NoError(t, err)
+			}
+			require.NotNil(t, r)
+
+			assert.EqualValues(t, 3, int(r.InsertedRows))
+			assert.EqualValues(t, 3, int(r.TotalRows))
+			assert.EqualValues(t, 0, int(r.SkippedRows))
+			var rowCount int64
+			err = connx.QueryRowContext(ctx, "select count(*) from public.users").Scan(&rowCount)
+			assert.NoError(t, err)
+			assert.Equal(t, int64(3), rowCount)
+			assert.Equal(t, int64(3), copier.GetInsertedRows())
+
+			rows, err := connx.QueryContext(ctx, "select * from public.users")
+			require.NoError(t, err)
+
+			hasNext := rows.Next()
+			require.True(t, hasNext)
+			var name string
+			var city string
+			var description string
+			err = rows.Scan(&name, &city, &description)
+			require.NoError(t, err)
+			defer rows.Close()
+			assert.Equal(t, "José", name)
+			assert.Equal(t, "São Paulo", city)
+			assert.Equal(t, "café", description)
+
+			hasNext = rows.Next()
+			require.True(t, hasNext)
+			err = rows.Scan(&name, &city, &description)
+			require.NoError(t, err)
+			assert.Equal(t, "Müller", name)
+			assert.Equal(t, "München", city)
+			assert.Equal(t, "Übung", description)
+
+			hasNext = rows.Next()
+			require.True(t, hasNext)
+			err = rows.Scan(&name, &city, &description)
+			require.NoError(t, err)
+			assert.Equal(t, "François", name)
+			assert.Equal(t, "Montréal", city)
+			assert.Equal(t, "naïve", description)
+		})
+	}
+}
+
 func TestErrorAtRow(t *testing.T) {
 	ctx := context.Background()
 

@@ -248,6 +248,13 @@ func WithClientSideSorting(clientSideSorting bool) Option {
 	}
 }
 
+func WithWindows1252Handling(windows1252Handling bool) Option {
+	return func(c *Copier) error {
+		c.windows1252Handling = windows1252Handling
+		return nil
+	}
+}
+
 func NewErrContinue(err error) HandleBatchErrorResult {
 	return HandleBatchErrorResult{
 		Continue:     true,
