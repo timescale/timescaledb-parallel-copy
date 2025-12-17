@@ -228,22 +228,22 @@ func WithSchemaName(schema string) Option {
 }
 
 // WithDirectCompress disable the use of Direct Compress
-func WithDirectCompress(directCompress bool) Option {
+func WithUseDirectCompress(useDirectCompress bool) Option {
 	return func(c *Copier) error {
-		c.directCompress = directCompress
+		c.useDirectCompress = useDirectCompress
 		return nil
 	}
 }
 
 // WithClientSideSorting set the GUC that the client side data is pre-sorted
-func WithClientSideSorting(clientSideSorting bool) Option {
+func WithHasClientSideSorting(hasClientSideSorting bool) Option {
 	return func(c *Copier) error {
 		// Can only be used in combination with direct compress
-		if c.directCompress {
+		if hasClientSideSorting && !c.useDirectCompress {
 			return errors.New("Direct Compress can not be disabled in combination with enabled client side sorting.")
 		}
 
-		c.clientSideSorting = clientSideSorting
+		c.hasClientSideSorting = hasClientSideSorting
 		return nil
 	}
 }

@@ -20,7 +20,7 @@ import (
 
 const (
 	binName    = "timescaledb-parallel-copy"
-	version    = "v0.11.0"
+	version    = "v0.11.1"
 	tabCharStr = "\\t"
 )
 
@@ -60,8 +60,8 @@ var (
 
 	dbName string
 
-	directCompress    bool
-	clientSideSorting bool
+	useDirectCompress    bool
+	hasClientSideSorting bool
 )
 
 // Parse args
@@ -102,8 +102,8 @@ func init() {
 
 	flag.BoolVar(&showVersion, "version", false, "Show the version of this tool")
 
-	flag.BoolVar(&directCompress, "disable-direct-compress", false, "Do not use direct compress to write data to TimescaleDB")
-	flag.BoolVar(&clientSideSorting, "enable-client-side-sorting", false, "Guaranteed data order in place on the client side")
+	flag.BoolVar(&useDirectCompress, "disable-direct-compress", false, "Do not use direct compress for ingestion")
+	flag.BoolVar(&hasClientSideSorting, "enable-client-side-sorting", false, "Guaranteed data order in place on the client side")
 
 	flag.Parse()
 }
@@ -128,7 +128,6 @@ func main() {
 		log.Fatalf("Error: -header-line-count is deprecated. Use -skip-lines instead")
 	}
 
-
 	logger := &csvCopierLogger{}
 
 	opts := []csvcopy.Option{
@@ -147,6 +146,8 @@ func main() {
 		csvcopy.WithLogBatches(logBatches),
 		csvcopy.WithReportingPeriod(reportingPeriod),
 		csvcopy.WithVerbose(verbose),
+		csvcopy.WithUseDirectCompress(!useDirectCompress), // Inverted logic: flag is disable
+		csvcopy.WithHasClientSideSorting(hasClientSideSorting),
 	}
 
 	if importID != "" {
@@ -189,12 +190,7 @@ func main() {
 		opts = append(opts, csvcopy.WithSkipHeader(true))
 	}
 
-	if directCompress {
-		opts = append(opts, csvcopy.WithDirectCompress(true))
-	}
-	if clientSideSorting {
-		opts = append(opts, csvcopy.WithClientSideSorting(true))
-	}
+	//log.Fatalf("setting direct compress to '%t' for the session", useDirectCompress)
 
 	copier, err := csvcopy.NewCopier(
 		postgresConnect,
