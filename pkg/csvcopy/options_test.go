@@ -198,8 +198,8 @@ func TestOptionsMutualExclusivity(t *testing.T) {
 		{
 			name: "Disable DirectCompress + enabled ClientSideSorting should not work",
 			options: []Option{
-				WithDirectCompress(true),
-				WithClientSideSorting(true),
+				WithUseDirectCompress(false),
+				WithHasClientSideSorting(true),
 			},
 			expectError:   true,
 			errorContains: "Direct Compress can not be disabled in combination with enabled client side sorting.",
@@ -397,4 +397,3 @@ func TestQueueSizeSetsQueueSize(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, copier.queueSize)
 }
-
