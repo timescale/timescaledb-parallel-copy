@@ -388,7 +388,12 @@ func buildColumnsFromMapping(headers []string, columnMapping ColumnsMapping) ([]
 
 		sanitizedColumn := pgx.Identifier{dbColumn}.Sanitize()
 		if seenColumns[sanitizedColumn] {
-			return nil, fmt.Errorf("duplicate database column name: %s", sanitizedColumn)
+			return nil, fmt.Errorf(
+				"duplicate database column name: %s. Headers: %v. Column mapping: %v",
+				sanitizedColumn,
+				headers,
+				columnMapping,
+			)
 		}
 
 		seenColumns[sanitizedColumn] = true
@@ -517,13 +522,13 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 		c.LogInfo(ctx, fmt.Sprintf("setting client side sorting to '%t' for the session", c.clientSideSorting))
 	}
 
-	// set Direct Compress GUCs for session 
+	// set Direct Compress GUCs for session
 	if _, err := dbx.Exec(fmt.Sprintf("SET timescaledb.enable_direct_compress_copy=%t", !c.directCompress)); err != nil {
-    	return err
+		return err
 	}
 	// set Direct Compress's client side sorting GUCs for session
 	if _, err := dbx.Exec(fmt.Sprintf("SET timescaledb.enable_direct_compress_copy_client_sorted=%t", c.clientSideSorting)); err != nil {
-    	return err
+		return err
 	}
 
 	copyCmd := c.CopyCmdWithContext(ctx)
@@ -687,7 +692,6 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 		InsertedRows: failHandlerError.InsertedRows,
 		SkippedRows:  failHandlerError.SkippedRows,
 	}, nil
-
 }
 
 func isTemporaryError(err error) bool {

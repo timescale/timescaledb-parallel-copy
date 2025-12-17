@@ -109,7 +109,7 @@ func TestWriteDataToCSV(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 42, intValue)
 	assert.Equal(t, "xasev", strValue)
-	assert.InDelta(t, 4.2, floatValue, 0, 01)
+	assert.InDelta(t, 4.2, floatValue, 0, 0o1)
 
 	hasNext = rows.Next()
 	require.True(t, hasNext)
@@ -117,7 +117,7 @@ func TestWriteDataToCSV(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 24, intValue)
 	assert.Equal(t, "qased", strValue)
-	assert.InDelta(t, 2.4, floatValue, 0, 01)
+	assert.InDelta(t, 2.4, floatValue, 0, 0o1)
 
 	rows.Close()
 
@@ -216,7 +216,7 @@ func TestWriteDataToCSVWithHeader(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 42, intValue)
 	assert.Equal(t, "xasev", strValue)
-	assert.InDelta(t, 4.2, floatValue, 0, 01)
+	assert.InDelta(t, 4.2, floatValue, 0, 0o1)
 
 	hasNext = rows.Next()
 	require.True(t, hasNext)
@@ -224,7 +224,7 @@ func TestWriteDataToCSVWithHeader(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 24, intValue)
 	assert.Equal(t, "qased", strValue)
-	assert.InDelta(t, 2.4, floatValue, 0, 01)
+	assert.InDelta(t, 2.4, floatValue, 0, 0o1)
 
 	rows.Close()
 
@@ -991,7 +991,6 @@ func TestFailedBatchHandlerFailure(t *testing.T) {
 	require.EqualValues(t, 0, int(r.SkippedRows))
 
 	require.ErrorContains(t, err, "couldn't handle error")
-
 }
 
 func TestTransactionState(t *testing.T) {
@@ -1097,7 +1096,6 @@ func TestTransactionState(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, batch4)
 	require.Nil(t, row)
-
 }
 
 func TestTransactionIdempotency(t *testing.T) {
@@ -1235,7 +1233,6 @@ func TestTransactionIdempotency(t *testing.T) {
 	require.Equal(t, `24,qased,2.4
 24,qased,hello
 `, string(failedBatchContent))
-
 }
 
 func TestTransactionIdempotencyWindow(t *testing.T) {
@@ -1367,7 +1364,6 @@ func TestTransactionIdempotencyWindow(t *testing.T) {
 		assert.EqualValues(t, 6, result.TotalRows)
 		assert.EqualValues(t, 0, int(result.SkippedRows))
 	}
-
 }
 
 func TestTransactionFailureRetry(t *testing.T) {
@@ -1826,7 +1822,7 @@ func TestCalculateColumnsFromHeaders(t *testing.T) {
 				{CSVColumnName: "last_name", DatabaseColumnName: "name"}, // Same database column
 				{CSVColumnName: "email", DatabaseColumnName: "email_addr"},
 			},
-			expectedError: "duplicate database column name: \"name\"",
+			expectedError: "duplicate database column name: \"name\". Headers: [first_name last_name email]. Column mapping: [{first_name name} {last_name name} {email email_addr}]",
 		},
 		{
 			name:       "duplicate database columns in mapping but doesn't create a conflict",
