@@ -190,8 +190,6 @@ func main() {
 		opts = append(opts, csvcopy.WithSkipHeader(true))
 	}
 
-	//log.Fatalf("setting direct compress to '%t' for the session", useDirectCompress)
-
 	copier, err := csvcopy.NewCopier(
 		postgresConnect,
 		tableName,
