@@ -514,7 +514,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 	if err != nil {
 		return err
 	}
-	defer dbx.Close()
+	defer dbx.Close() //nolint:errcheck
 
 	if c.verbose {
 		c.LogInfo(ctx, "connected to service")
@@ -554,7 +554,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 }
 
 func (c *Copier) handleBatch(ctx context.Context, batch Batch, dbx *sqlx.DB, copyCmd string) error {
-	defer batch.Close()
+	defer batch.Close() //nolint:errcheck // no error returned
 	atomic.AddInt64(&c.totalRows, int64(batch.Location.RowCount))
 
 	if c.logBatches {
@@ -619,7 +619,7 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 	if err != nil {
 		return HandleCopyErrorResult{}, fmt.Errorf("failed to connect to database: %w", err)
 	}
-	defer connx.Close()
+	defer connx.Close() //nolint:errcheck
 
 	if !batch.Location.HasImportID() {
 		if c.failHandler == nil {

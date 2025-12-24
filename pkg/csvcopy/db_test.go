@@ -144,7 +144,7 @@ func TestCopyFromLines(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			d := mustConnect(t)
-			defer d.Close()
+			defer d.Close() //nolint:errcheck
 
 			// Create our test table.
 			d.MustExec(`CREATE TABLE test` + c.columns)
@@ -190,7 +190,7 @@ func TestCopyFromLines(t *testing.T) {
 
 	t.Run("bad COPY statements bubble up errors", func(t *testing.T) {
 		d := mustConnect(t)
-		defer d.Close()
+		defer d.Close() //nolint:errcheck
 
 		// Have plenty of data ready to write, to make sure that the internal
 		// pipes are correctly maintained during an error.
@@ -215,7 +215,7 @@ func TestCopyFromLines(t *testing.T) {
 
 	t.Run("timestamp COPY honors DateStyle", func(t *testing.T) {
 		d := mustConnect(t)
-		defer d.Close()
+		defer d.Close() //nolint:errcheck
 
 		// Get the connected database to ALTER.
 		var dbname string
@@ -230,9 +230,9 @@ func TestCopyFromLines(t *testing.T) {
 		// Reconnect after the DateStyle change; we don't want any pooled
 		// connections using the old setting. Also reset the DateStyle at the
 		// end of the test.
-		d.Close()
+		d.Close() //nolint:errcheck
 		d = mustConnect(t)
-		defer d.Close()
+		defer d.Close() //nolint:errcheck
 		defer d.MustExec(`ALTER DATABASE ` + dbname + ` RESET DateStyle`)
 
 		// Create our test table.

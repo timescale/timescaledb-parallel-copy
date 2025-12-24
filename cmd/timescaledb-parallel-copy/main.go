@@ -202,7 +202,7 @@ func main() {
 		opts...,
 	)
 	if err != nil {
-		if errors.Is(err, csvcopy.HeaderInCopyOptionsError) {
+		if errors.Is(err, csvcopy.ErrHeaderInCopyOptions) {
 			log.Fatalf("Error: 'HEADER' detected in -copy-options. If you were using 'HEADER' with PostgreSQL COPY, use: -skip-header")
 		}
 		log.Fatal(err)
@@ -221,7 +221,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("failed to open file: %s", err)
 		}
-		defer file.Close()
+		defer file.Close() //nolint:errcheck
 
 		reader = file
 	} else {
