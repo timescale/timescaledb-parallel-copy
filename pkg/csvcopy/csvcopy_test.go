@@ -279,11 +279,11 @@ func TestWriteWindows1252EncodedDataWithHeader(t *testing.T) {
 
 	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
 	require.NoError(t, err)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	connx, err := db.Connx(ctx)
 	require.NoError(t, err)
-	defer connx.Close()
+	defer connx.Close() //nolint:errcheck
 
 	// Create table with text columns
 	query := `CREATE TABLE "public"."users" (
@@ -297,7 +297,7 @@ func TestWriteWindows1252EncodedDataWithHeader(t *testing.T) {
 	// Create a temporary CSV file
 	tmpfile, err := os.CreateTemp("", "example")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	latin1Data := []byte("name,city,description\nJos\xe9,S\xe3o Paulo,caf\xe9\nM\xfcller,M\xfcnchen,\xdcbung\nFran\xe7ois,Montr\xe9al,na\xefve\n")
 
@@ -345,7 +345,7 @@ func TestWriteWindows1252EncodedDataWithHeader(t *testing.T) {
 			var description string
 			err = rows.Scan(&name, &city, &description)
 			require.NoError(t, err)
-			defer rows.Close()
+			defer rows.Close() //nolint:errcheck
 			assert.Equal(t, "José", name)
 			assert.Equal(t, "São Paulo", city)
 			assert.Equal(t, "café", description)

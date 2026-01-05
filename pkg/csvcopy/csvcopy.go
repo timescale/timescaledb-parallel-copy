@@ -748,7 +748,7 @@ func isServerEncodingUTF8(ctx context.Context, db *sqlx.DB) (isUtf8 bool, err er
 	if err != nil {
 		return isUtf8, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck
 	rows.Next()
 	err = rows.Scan(&isUtf8)
 	if err != nil {
