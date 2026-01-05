@@ -624,8 +624,8 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 	}
 
 	// Check if this is an encoding error
-	if isEncodingError(copyErr) && c.windows1252Handling {
-		isUtf8, err := serverEncodingIsUTF8(ctx, db)
+	if c.windows1252Handling && isEncodingError(copyErr) {
+		isUtf8, err := isServerEncodingUTF8(ctx, db)
 		if err != nil {
 			return HandleCopyErrorResult{}, err
 		}
@@ -739,7 +739,7 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 
 }
 
-func serverEncodingIsUTF8(ctx context.Context, db *sqlx.DB) (isUtf8 bool, err error) {
+func isServerEncodingUTF8(ctx context.Context, db *sqlx.DB) (isUtf8 bool, err error) {
 	rows, err := db.QueryxContext(ctx, "SELECT current_setting('server_encoding', true) = 'UTF8';")
 	if err != nil {
 		return isUtf8, err
