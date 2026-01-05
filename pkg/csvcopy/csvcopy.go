@@ -392,7 +392,12 @@ func buildColumnsFromMapping(headers []string, columnMapping ColumnsMapping) ([]
 
 		sanitizedColumn := pgx.Identifier{dbColumn}.Sanitize()
 		if seenColumns[sanitizedColumn] {
-			return nil, fmt.Errorf("duplicate database column name: %s", sanitizedColumn)
+			return nil, fmt.Errorf(
+				"duplicate database column name: %s. Headers: %v. Column mapping: %v",
+				sanitizedColumn,
+				headers,
+				columnMapping,
+			)
 		}
 
 		seenColumns[sanitizedColumn] = true
@@ -513,7 +518,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 	if err != nil {
 		return err
 	}
-	defer dbx.Close()
+	defer dbx.Close() //nolint:errcheck
 
 	if c.verbose {
 		c.LogInfo(ctx, "connected to service")
@@ -521,13 +526,13 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 		c.LogInfo(ctx, fmt.Sprintf("setting client side sorting to '%t' for the session", c.clientSideSorting))
 	}
 
-	// set Direct Compress GUCs for session 
+	// set Direct Compress GUCs for session
 	if _, err := dbx.Exec(fmt.Sprintf("SET timescaledb.enable_direct_compress_copy=%t", !c.directCompress)); err != nil {
-    	return err
+		return err
 	}
 	// set Direct Compress's client side sorting GUCs for session
 	if _, err := dbx.Exec(fmt.Sprintf("SET timescaledb.enable_direct_compress_copy_client_sorted=%t", c.clientSideSorting)); err != nil {
-    	return err
+		return err
 	}
 
 	copyCmd := c.CopyCmdWithContext(ctx)
@@ -553,7 +558,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 }
 
 func (c *Copier) handleBatch(ctx context.Context, batch Batch, dbx *sqlx.DB, copyCmd string) error {
-	defer batch.Close()
+	defer batch.Close() //nolint:errcheck // no error returned
 	atomic.AddInt64(&c.totalRows, int64(batch.Location.RowCount))
 
 	if c.logBatches {
@@ -663,7 +668,7 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 	if err != nil {
 		return HandleCopyErrorResult{}, fmt.Errorf("failed to connect to database: %w", err)
 	}
-	defer connx.Close()
+	defer connx.Close() //nolint:errcheck
 
 	if !batch.Location.HasImportID() {
 		if c.failHandler == nil {
@@ -736,7 +741,6 @@ func (c *Copier) handleCopyError(ctx context.Context, db *sqlx.DB, batch Batch, 
 		InsertedRows: failHandlerError.InsertedRows,
 		SkippedRows:  failHandlerError.SkippedRows,
 	}, nil
-
 }
 
 func isServerEncodingUTF8(ctx context.Context, db *sqlx.DB) (isUtf8 bool, err error) {

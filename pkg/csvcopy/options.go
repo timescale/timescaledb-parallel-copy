@@ -51,14 +51,14 @@ func WithReportingPeriod(reportingPeriod time.Duration) Option {
 	}
 }
 
-var HeaderInCopyOptionsError = errors.New("'HEADER' in copyOptions")
+var ErrHeaderInCopyOptions = errors.New("'HEADER' in copyOptions")
 
 // WithCopyOptions appends the COPY options for the COPY operation.
 // By default is 'CSV'
 func WithCopyOptions(opt string) Option {
 	return func(c *Copier) error {
 		if strings.Contains(strings.ToUpper(opt), "HEADER") {
-			return HeaderInCopyOptionsError
+			return ErrHeaderInCopyOptions
 		}
 		c.copyOptions = opt
 		return nil
@@ -240,7 +240,7 @@ func WithClientSideSorting(clientSideSorting bool) Option {
 	return func(c *Copier) error {
 		// Can only be used in combination with direct compress
 		if c.directCompress {
-			return errors.New("Direct Compress can not be disabled in combination with enabled client side sorting.")
+			return errors.New("direct compress can not be disabled when client side sorting is enabled")
 		}
 
 		c.clientSideSorting = clientSideSorting

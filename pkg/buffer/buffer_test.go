@@ -72,9 +72,10 @@ func TestSeekPositions(t *testing.T) {
 			// Reset position for each test case to ensure predictable state
 			if strings.Contains(tt.name, "SeekCurrent") {
 				// For SeekCurrent tests, set up the expected starting position
-				if tt.name == "SeekCurrent -3" {
+				switch tt.name {
+				case "SeekCurrent -3":
 					_, _ = sb.Seek(9, io.SeekStart) // Start from end
-				} else if tt.name == "SeekCurrent -6" {
+				case "SeekCurrent -6":
 					_, _ = sb.Seek(6, io.SeekStart) // Start from position 6
 				}
 			}

@@ -60,7 +60,7 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 	if err != nil {
 		return 0, fmt.Errorf("acquiring DBx connection for COPY: %w", err)
 	}
-	defer connx.Close()
+	defer connx.Close() //nolint:errcheck
 
 	if !batch.Location.HasImportID() {
 		rowCount, err := CopyFromLines(ctx, connx.Conn, batch.Data, copyCmd)
@@ -90,7 +90,7 @@ func copyFromBatch(ctx context.Context, db *sqlx.DB, batch Batch, copyCmd string
 			if err != nil {
 				return 0, fmt.Errorf("acquiring DBx connection for transaction row: %w", err)
 			}
-			defer connx.Close()
+			defer connx.Close() //nolint:errcheck
 
 			trState, err := tr.Get(ctx, connx)
 			if err != nil {

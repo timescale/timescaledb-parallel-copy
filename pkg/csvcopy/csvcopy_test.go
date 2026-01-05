@@ -48,11 +48,11 @@ func TestWriteDataToCSV(t *testing.T) {
 
 	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
 	require.NoError(t, err)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	connx, err := db.Connx(ctx)
 	require.NoError(t, err)
-	defer connx.Close()
+	defer connx.Close() //nolint:errcheck
 
 	_, err = connx.ExecContext(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
@@ -60,7 +60,7 @@ func TestWriteDataToCSV(t *testing.T) {
 	// Create a temporary CSV file
 	tmpfile, err := os.CreateTemp("", "example")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	// Write data to the CSV file
 	writer := csv.NewWriter(tmpfile)
@@ -109,7 +109,7 @@ func TestWriteDataToCSV(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 42, intValue)
 	assert.Equal(t, "xasev", strValue)
-	assert.InDelta(t, 4.2, floatValue, 0, 01)
+	assert.InDelta(t, 4.2, floatValue, 0, 0o1)
 
 	hasNext = rows.Next()
 	require.True(t, hasNext)
@@ -117,9 +117,9 @@ func TestWriteDataToCSV(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 24, intValue)
 	assert.Equal(t, "qased", strValue)
-	assert.InDelta(t, 2.4, floatValue, 0, 01)
+	assert.InDelta(t, 2.4, floatValue, 0, 0o1)
 
-	rows.Close()
+	rows.Close() //nolint:errcheck
 
 	// Check if the table does not exist because the importID was not provided
 	var tableExists bool
@@ -155,11 +155,11 @@ func TestWriteDataToCSVWithHeader(t *testing.T) {
 
 	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
 	require.NoError(t, err)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	connx, err := db.Connx(ctx)
 	require.NoError(t, err)
-	defer connx.Close()
+	defer connx.Close() //nolint:errcheck
 
 	_, err = connx.ExecContext(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
@@ -167,7 +167,7 @@ func TestWriteDataToCSVWithHeader(t *testing.T) {
 	// Create a temporary CSV file
 	tmpfile, err := os.CreateTemp("", "example")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	// Write data to the CSV file
 	writer := csv.NewWriter(tmpfile)
@@ -216,7 +216,7 @@ func TestWriteDataToCSVWithHeader(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 42, intValue)
 	assert.Equal(t, "xasev", strValue)
-	assert.InDelta(t, 4.2, floatValue, 0, 01)
+	assert.InDelta(t, 4.2, floatValue, 0, 0o1)
 
 	hasNext = rows.Next()
 	require.True(t, hasNext)
@@ -224,9 +224,9 @@ func TestWriteDataToCSVWithHeader(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 24, intValue)
 	assert.Equal(t, "qased", strValue)
-	assert.InDelta(t, 2.4, floatValue, 0, 01)
+	assert.InDelta(t, 2.4, floatValue, 0, 0o1)
 
-	rows.Close()
+	rows.Close() //nolint:errcheck
 
 	// Check if the table does not exist because the importID was not provided
 	var tableExists bool
@@ -396,14 +396,14 @@ func TestErrorAtRow(t *testing.T) {
 
 	conn, err := pgx.Connect(ctx, connStr)
 	require.NoError(t, err)
-	defer conn.Close(ctx)
+	defer conn.Close(ctx) //nolint:errcheck
 	_, err = conn.Exec(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
 
 	// Create a temporary CSV file
 	tmpfile, err := os.CreateTemp("", "example")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	// Write data to the CSV file
 	writer := csv.NewWriter(tmpfile)
@@ -478,14 +478,14 @@ func TestErrorAtRowAndSkipLines(t *testing.T) {
 
 	conn, err := pgx.Connect(ctx, connStr)
 	require.NoError(t, err)
-	defer conn.Close(ctx)
+	defer conn.Close(ctx) //nolint:errcheck
 	_, err = conn.Exec(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
 
 	// Create a temporary CSV file
 	tmpfile, err := os.CreateTemp("", "example")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	// Write data to the CSV file
 	writer := csv.NewWriter(tmpfile)
@@ -562,14 +562,14 @@ func TestErrorAtRowWithHeader(t *testing.T) {
 
 	conn, err := pgx.Connect(ctx, connStr)
 	require.NoError(t, err)
-	defer conn.Close(ctx)
+	defer conn.Close(ctx) //nolint:errcheck
 	_, err = conn.Exec(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
 
 	// Create a temporary CSV file
 	tmpfile, err := os.CreateTemp("", "example")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	// Write data to the CSV file
 	writer := csv.NewWriter(tmpfile)
@@ -645,14 +645,14 @@ func TestErrorAtRowAutoColumnMappingAndSkipLines(t *testing.T) {
 
 	conn, err := pgx.Connect(ctx, connStr)
 	require.NoError(t, err)
-	defer conn.Close(ctx)
+	defer conn.Close(ctx) //nolint:errcheck
 	_, err = conn.Exec(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
 
 	// Create a temporary CSV file
 	tmpfile, err := os.CreateTemp("", "example")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	// Write data to the CSV file
 	writer := csv.NewWriter(tmpfile)
@@ -734,14 +734,14 @@ func TestErrorAtRowWithColumnMapping(t *testing.T) {
 
 	conn, err := pgx.Connect(ctx, connStr)
 	require.NoError(t, err)
-	defer conn.Close(ctx)
+	defer conn.Close(ctx) //nolint:errcheck
 	_, err = conn.Exec(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
 
 	// Create a temporary CSV file
 	tmpfile, err := os.CreateTemp("", "example")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	// Write data to the CSV file
 	writer := csv.NewWriter(tmpfile)
@@ -822,14 +822,14 @@ func TestWriteReportProgress(t *testing.T) {
 
 	conn, err := pgx.Connect(ctx, connStr)
 	require.NoError(t, err)
-	defer conn.Close(ctx)
+	defer conn.Close(ctx) //nolint:errcheck
 	_, err = conn.Exec(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
 
 	// Create a temporary CSV file
 	tmpfile, err := os.CreateTemp("", "example")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	// Write data to the CSV file
 	writer := csv.NewWriter(tmpfile)
@@ -913,14 +913,14 @@ func TestFailedBatchHandlerContinue(t *testing.T) {
 
 	conn, err := pgx.Connect(ctx, connStr)
 	require.NoError(t, err)
-	defer conn.Close(ctx)
+	defer conn.Close(ctx) //nolint:errcheck
 	_, err = conn.Exec(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
 
 	// Create a temporary CSV file
 	tmpfile, err := os.CreateTemp("", "example")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	// Write data to the CSV file
 	writer := csv.NewWriter(tmpfile)
@@ -988,14 +988,14 @@ func TestFailedBatchHandlerStop(t *testing.T) {
 
 	conn, err := pgx.Connect(ctx, connStr)
 	require.NoError(t, err)
-	defer conn.Close(ctx)
+	defer conn.Close(ctx) //nolint:errcheck
 	_, err = conn.Exec(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
 
 	// Create a temporary CSV file
 	tmpfile, err := os.CreateTemp("", "example")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	// Write data to the CSV file
 	writer := csv.NewWriter(tmpfile)
@@ -1080,14 +1080,14 @@ func TestFailedBatchHandlerFailure(t *testing.T) {
 
 	conn, err := pgx.Connect(ctx, connStr)
 	require.NoError(t, err)
-	defer conn.Close(ctx)
+	defer conn.Close(ctx) //nolint:errcheck
 	_, err = conn.Exec(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
 
 	// Create a temporary CSV file
 	tmpfile, err := os.CreateTemp("", "example")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	// Write data to the CSV file
 	writer := csv.NewWriter(tmpfile)
@@ -1125,7 +1125,6 @@ func TestFailedBatchHandlerFailure(t *testing.T) {
 	require.EqualValues(t, 0, int(r.SkippedRows))
 
 	require.ErrorContains(t, err, "couldn't handle error")
-
 }
 
 func TestTransactionState(t *testing.T) {
@@ -1152,11 +1151,11 @@ func TestTransactionState(t *testing.T) {
 
 	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
 	require.NoError(t, err)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	connx, err := db.Connx(ctx)
 	require.NoError(t, err)
-	defer connx.Close()
+	defer connx.Close() //nolint:errcheck
 
 	_, err = connx.ExecContext(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
@@ -1164,7 +1163,7 @@ func TestTransactionState(t *testing.T) {
 	// Create a temporary CSV file
 	tmpfile, err := os.CreateTemp("", "example")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	// Write data to the CSV file
 	writer := csv.NewWriter(tmpfile)
@@ -1231,7 +1230,6 @@ func TestTransactionState(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, batch4)
 	require.Nil(t, row)
-
 }
 
 func TestTransactionIdempotency(t *testing.T) {
@@ -1258,11 +1256,11 @@ func TestTransactionIdempotency(t *testing.T) {
 
 	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
 	require.NoError(t, err)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	connx, err := db.Connx(ctx)
 	require.NoError(t, err)
-	defer connx.Close()
+	defer connx.Close() //nolint:errcheck
 
 	_, err = connx.ExecContext(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
@@ -1270,7 +1268,7 @@ func TestTransactionIdempotency(t *testing.T) {
 	// Create a temporary CSV file
 	tmpfile, err := os.CreateTemp("", "example")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	// Write data to the CSV file
 	writer := csv.NewWriter(tmpfile)
@@ -1369,7 +1367,6 @@ func TestTransactionIdempotency(t *testing.T) {
 	require.Equal(t, `24,qased,2.4
 24,qased,hello
 `, string(failedBatchContent))
-
 }
 
 func TestTransactionIdempotencyWindow(t *testing.T) {
@@ -1396,11 +1393,11 @@ func TestTransactionIdempotencyWindow(t *testing.T) {
 
 	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
 	require.NoError(t, err)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	connx, err := db.Connx(ctx)
 	require.NoError(t, err)
-	defer connx.Close()
+	defer connx.Close() //nolint:errcheck
 
 	_, err = connx.ExecContext(ctx, "create table public.metrics (device_id int, label text, value float8)")
 	require.NoError(t, err)
@@ -1408,7 +1405,7 @@ func TestTransactionIdempotencyWindow(t *testing.T) {
 	// Create a temporary CSV file
 	tmpfile, err := os.CreateTemp("", "example")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	// Write data to the CSV file
 	writer := csv.NewWriter(tmpfile)
@@ -1501,7 +1498,6 @@ func TestTransactionIdempotencyWindow(t *testing.T) {
 		assert.EqualValues(t, 6, result.TotalRows)
 		assert.EqualValues(t, 0, int(result.SkippedRows))
 	}
-
 }
 
 func TestTransactionFailureRetry(t *testing.T) {
@@ -1530,11 +1526,11 @@ func TestTransactionFailureRetry(t *testing.T) {
 
 		db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
 		require.NoError(t, err)
-		defer db.Close()
+		defer db.Close() //nolint:errcheck
 
 		connx, err := db.Connx(ctx)
 		require.NoError(t, err)
-		defer connx.Close()
+		defer connx.Close() //nolint:errcheck
 
 		_, err = connx.ExecContext(ctx, "create table public.metrics (device_id int, label text, value float8)")
 		require.NoError(t, err)
@@ -1545,7 +1541,7 @@ func TestTransactionFailureRetry(t *testing.T) {
 		// Create a temporary CSV file
 		badFile, err := os.CreateTemp("", "example")
 		require.NoError(t, err)
-		defer os.Remove(badFile.Name())
+		defer os.Remove(badFile.Name()) //nolint:errcheck
 		{
 			// Write data to the CSV file
 			writer := csv.NewWriter(badFile)
@@ -1574,7 +1570,7 @@ func TestTransactionFailureRetry(t *testing.T) {
 		// Create a temporary CSV file
 		goodFile, err := os.CreateTemp("", "example")
 		require.NoError(t, err)
-		defer os.Remove(goodFile.Name())
+		defer os.Remove(goodFile.Name()) //nolint:errcheck
 		{
 			// Write data to the CSV file
 			writer := csv.NewWriter(goodFile)
@@ -1689,11 +1685,11 @@ func TestTransactionFailureRetry(t *testing.T) {
 
 		db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
 		require.NoError(t, err)
-		defer db.Close()
+		defer db.Close() //nolint:errcheck
 
 		connx, err := db.Connx(ctx)
 		require.NoError(t, err)
-		defer connx.Close()
+		defer connx.Close() //nolint:errcheck
 
 		_, err = connx.ExecContext(ctx, "create table public.metrics (device_id int, label text, value float8)")
 		require.NoError(t, err)
@@ -1701,7 +1697,7 @@ func TestTransactionFailureRetry(t *testing.T) {
 		// Create a temporary CSV file
 		badFile, err := os.CreateTemp("", "example")
 		require.NoError(t, err)
-		defer os.Remove(badFile.Name())
+		defer os.Remove(badFile.Name()) //nolint:errcheck
 		{
 			// Write data to the CSV file
 			writer := csv.NewWriter(badFile)
@@ -1730,7 +1726,7 @@ func TestTransactionFailureRetry(t *testing.T) {
 		// Create a temporary CSV file
 		retryFile, err := os.CreateTemp("", "example")
 		require.NoError(t, err)
-		defer os.Remove(retryFile.Name())
+		defer os.Remove(retryFile.Name()) //nolint:errcheck
 		{
 			// Write data to the CSV file
 			writer := csv.NewWriter(retryFile)
@@ -1960,7 +1956,7 @@ func TestCalculateColumnsFromHeaders(t *testing.T) {
 				{CSVColumnName: "last_name", DatabaseColumnName: "name"}, // Same database column
 				{CSVColumnName: "email", DatabaseColumnName: "email_addr"},
 			},
-			expectedError: "duplicate database column name: \"name\"",
+			expectedError: "duplicate database column name: \"name\". Headers: [first_name last_name email]. Column mapping: [{first_name name} {last_name name} {email email_addr}]",
 		},
 		{
 			name:       "duplicate database columns in mapping but doesn't create a conflict",
@@ -2114,7 +2110,7 @@ func TestAtomicityAssurance(t *testing.T) {
 
 	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
 	require.NoError(t, err)
-	defer db.Close()
+	defer db.Close() //nolint:errcheck
 
 	// Setup test table
 	_, err = db.ExecContext(ctx, "CREATE TABLE public.test_metrics (device_id int, label text, value float8)")
@@ -2148,7 +2144,7 @@ func TestAtomicityAssurance(t *testing.T) {
 		if err != nil {
 			return fmt.Errorf("acquiring DBx connection for COPY: %w", err)
 		}
-		defer connx.Close()
+		defer connx.Close() //nolint:errcheck
 
 		// Use BeginTxx as the current code does
 		tx, err := connx.BeginTxx(ctx, nil)
