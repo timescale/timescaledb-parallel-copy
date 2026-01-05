@@ -165,13 +165,13 @@ func ensureTransactionTable(ctx context.Context, connString string) error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to database, %w", err)
 	}
-	defer dbx.Close()
+	defer dbx.Close() //nolint:errcheck
 
 	connx, err := dbx.Connx(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to database, %w", err)
 	}
-	defer connx.Close()
+	defer connx.Close() //nolint:errcheck
 
 	sql := `
 	CREATE SCHEMA IF NOT EXISTS timescaledb_parallel_copy;
@@ -207,13 +207,13 @@ func cleanOldTransactions(ctx context.Context, connString string, duration time.
 	if err != nil {
 		return fmt.Errorf("failed to connect to database, %w", err)
 	}
-	defer dbx.Close()
+	defer dbx.Close() //nolint:errcheck
 
 	connx, err := dbx.Connx(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to database, %w", err)
 	}
-	defer connx.Close()
+	defer connx.Close() //nolint:errcheck
 
 	sql := `
 	DELETE FROM timescaledb_parallel_copy.transactions

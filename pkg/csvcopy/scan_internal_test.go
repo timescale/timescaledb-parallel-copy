@@ -217,7 +217,7 @@ func TestCSVRowState(t *testing.T) {
 		// others.
 		t.Run(fmt.Sprintf("live DB check: %s", c.name), func(t *testing.T) {
 			d := mustConnect(t)
-			defer d.Close()
+			defer d.Close() //nolint:errcheck
 
 			d.MustExec(`CREATE TABLE csv(t text)`)
 			defer d.MustExec(`DROP TABLE csv`)

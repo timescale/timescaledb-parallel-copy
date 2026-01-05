@@ -40,7 +40,7 @@ func TestBatchConflictHandler_WithUniqueConstraint(t *testing.T) {
 
 	conn, err := pgx.Connect(ctx, connStr)
 	require.NoError(t, err)
-	defer conn.Close(ctx)
+	defer conn.Close(ctx) //nolint:errcheck
 
 	// Create table with unique constraint
 	_, err = conn.Exec(ctx, `
@@ -56,7 +56,7 @@ func TestBatchConflictHandler_WithUniqueConstraint(t *testing.T) {
 	// Create temporary CSV file with duplicate data
 	tmpfile, err := os.CreateTemp("", "batch_conflict_test")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	writer := csv.NewWriter(tmpfile)
 	data := [][]string{
@@ -88,7 +88,7 @@ func TestBatchConflictHandler_WithUniqueConstraint(t *testing.T) {
 
 	reader, err := os.Open(tmpfile.Name())
 	require.NoError(t, err)
-	defer reader.Close()
+	defer reader.Close() //nolint:errcheck
 
 	result, err := copier.Copy(context.Background(), reader)
 	require.NoError(t, err, "Copy should succeed with conflict handler")
@@ -164,7 +164,7 @@ func TestBatchConflictHandler_WithoutBatchConflictHandler(t *testing.T) {
 
 	conn, err := pgx.Connect(ctx, connStr)
 	require.NoError(t, err)
-	defer conn.Close(ctx)
+	defer conn.Close(ctx) //nolint:errcheck
 
 	// Create table with unique constraint
 	_, err = conn.Exec(ctx, `
@@ -180,7 +180,7 @@ func TestBatchConflictHandler_WithoutBatchConflictHandler(t *testing.T) {
 	// Create temporary CSV file with duplicate data (same as previous test)
 	tmpfile, err := os.CreateTemp("", "batch_no_batch_conflict_handler_test")
 	require.NoError(t, err)
-	defer os.Remove(tmpfile.Name())
+	defer os.Remove(tmpfile.Name()) //nolint:errcheck
 
 	writer := csv.NewWriter(tmpfile)
 	data := [][]string{
@@ -211,7 +211,7 @@ func TestBatchConflictHandler_WithoutBatchConflictHandler(t *testing.T) {
 
 	reader, err := os.Open(tmpfile.Name())
 	require.NoError(t, err)
-	defer reader.Close()
+	defer reader.Close() //nolint:errcheck
 
 	result, err := copier.Copy(context.Background(), reader)
 	require.Error(t, err, "Copy should fail without conflict handler")
