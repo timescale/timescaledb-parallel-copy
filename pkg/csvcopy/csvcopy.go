@@ -105,6 +105,11 @@ type Copier struct {
 
 	windows1252Handling bool
 	useWindows1252 atomic.Bool
+
+	retryOnRecoverableError bool
+	retryTimeout time.Duration
+
+	recoveryStartedAt atomic.Pointer[time.Time]
 }
 
 // LogInfo logs a message with worker ID extracted from context if available
@@ -159,6 +164,8 @@ func NewCopier(
 		directCompress:    false,
 		clientSideSorting: false,
 		windows1252Handling: false,
+		retryOnRecoverableError: false,
+		retryTimeout: 5 * time.Minute,
 	}
 
 	for _, o := range options {
@@ -514,7 +521,7 @@ func (c *Copier) CopyCmdWithContext(ctx context.Context) string {
 // processBatches reads batches from channel c and copies them to the target
 // server while tracking stats on the write.
 func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int) (err error) {
-	dbx, err := connect(c.connString)
+	dbx, err := handleRecoverableErrors[*sqlx.DB](ctx, c, func() (*sqlx.DB, error) { return connect(c.connString) }, 0)
 	if err != nil {
 		return err
 	}
@@ -549,7 +556,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 			if !ok {
 				return
 			}
-			err = c.handleBatch(ctx, batch, dbx, copyCmd)
+			err = c.handleBatch(ctx, batch, dbx, copyCmd, 0)
 			if err != nil {
 				return err
 			}
@@ -557,7 +564,27 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 	}
 }
 
-func (c *Copier) handleBatch(ctx context.Context, batch Batch, dbx *sqlx.DB, copyCmd string) error {
+var recoverableErrors = []string{
+	"53100", // No space left on device (SQLSTATE 53100)
+	"57P01", // terminating connection due to administrator command (SQLSTATE 57P01)
+	"57P03", // the database system is shutting down (SQLSTATE 57P03)
+	"use of closed network connection",
+	"unexpected EOF",
+	"connection refused",
+}
+
+func isRecoverableError(err error) bool {
+	fmt.Println(err.Error())
+	for _, recoverableErr := range recoverableErrors {
+		if strings.Contains(err.Error(), recoverableErr) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Copier) handleBatch(ctx context.Context, batch Batch, dbx *sqlx.DB, copyCmd string, depth int) error {
+	c.LogInfo(ctx, "Handling batch. id %s, startRow: %d, depth %d", batch.Location.ImportID, batch.Location.StartRow, depth)
 	defer batch.Close() //nolint:errcheck // no error returned
 	atomic.AddInt64(&c.totalRows, int64(batch.Location.RowCount))
 
@@ -566,18 +593,29 @@ func (c *Copier) handleBatch(ctx context.Context, batch Batch, dbx *sqlx.DB, cop
 			batch.Location.StartRow, batch.Location.RowCount, batch.Location.ByteLen)
 	}
 
+	var rows int64
+	var err error
 	start := time.Now()
 
-	// Check if we're in Windows-1252 mode
-	if c.useWindows1252.Load() {
-		_, err := dbx.Exec("SET CLIENT_ENCODING TO 'WIN1252';")
-		if err != nil {
-			return err
+	rows, err = handleRecoverableErrors(ctx, c, func() (int64, error) {
+		// Check if we're in Windows-1252 mode
+		if c.useWindows1252.Load() {
+			_, err = dbx.Exec("SET CLIENT_ENCODING TO 'WIN1252';")
+			if err != nil {
+				return 0, err
+			}
 		}
-	}
-	rows, err := copyFromBatch(ctx, dbx, batch, copyCmd)
-
+		_, err = batch.Data.Seek(0, io.SeekStart)
+		if err != nil {
+			return 0, err
+		}
+		return copyFromBatch(ctx, dbx, batch, copyCmd)
+	}, 0)
 	if err != nil {
+		_, rewindErr := batch.Data.Seek(0, io.SeekStart)
+		if rewindErr != nil {
+			return rewindErr
+		}
 		handleResult, handleErr := c.handleCopyError(ctx, dbx, batch, err)
 		if handleErr != nil {
 			c.LogError(ctx, "Error handler failed for batch %d: %v", batch.Location.StartRow, handleErr)
@@ -835,6 +873,39 @@ func (c *Copier) GetTotalRows() int64 {
 
 func (c *Copier) HasImportID() bool {
 	return c.importID != ""
+}
+
+// handleRecoverableErrors executes the provided function f and retries
+// if it determines that the error returned by f is a "recoverable" error,
+// and if this copier is configured to retry on recoverable errors.
+// It uses exponential backoff up to a maximum of 32 seconds, retrying
+// until recoveryTimeout is reached.
+func handleRecoverableErrors[T any](ctx context.Context, c *Copier, f func() (T, error), depth int) (T, error) {
+	result, err := f()
+	if err != nil && isRecoverableError(err) && c.retryOnRecoverableError {
+		recoveryStartedAt := c.recoveryStartedAt.Load()
+		if recoveryStartedAt == nil {
+			now := time.Now()
+			c.recoveryStartedAt.Store(&now)
+		} else if time.Since(*recoveryStartedAt) > c.retryTimeout {
+			c.Logger.Infof("Timing out after %.0f seconds", c.retryTimeout.Seconds())
+			return result, err
+		}
+		sleepDuration := time.Duration((1 << depth) * time.Second)
+		c.Logger.Infof("Encountered recoverable error, waiting %.0fs to retry", sleepDuration.Seconds())
+		c.Logger.Infof("Recoverable error: %s", err.Error())
+		select {
+		case <-ctx.Done():
+			return result, ctx.Err()
+		case <-time.After(sleepDuration):
+		}
+		result, err = handleRecoverableErrors[T](ctx, c, f, min(depth+1, 5))
+		if err == nil {
+			c.recoveryStartedAt.Store(nil)
+		}
+		return result, err
+	}
+	return result, err
 }
 
 // ColumnsMapping defines mapping from CSV column name to database column name
