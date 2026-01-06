@@ -529,12 +529,12 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 
 	if c.verbose {
 		c.LogInfo(ctx, "connected to service")
-		c.LogInfo(ctx, fmt.Sprintf("setting direct compress to '%t' for the session", !c.directCompress))
+		c.LogInfo(ctx, fmt.Sprintf("setting direct compress to '%t' for the session", c.directCompress))
 		c.LogInfo(ctx, fmt.Sprintf("setting client side sorting to '%t' for the session", c.clientSideSorting))
 	}
 
 	// set Direct Compress GUCs for session
-	if _, err := dbx.Exec(fmt.Sprintf("SET timescaledb.enable_direct_compress_copy=%t", !c.directCompress)); err != nil {
+	if _, err := dbx.Exec(fmt.Sprintf("SET timescaledb.enable_direct_compress_copy=%t", c.directCompress)); err != nil {
 		return err
 	}
 	// set Direct Compress's client side sorting GUCs for session
