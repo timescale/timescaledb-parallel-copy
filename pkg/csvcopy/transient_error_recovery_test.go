@@ -129,8 +129,8 @@ func TestDatabaseShutdownScenarios(t *testing.T) {
 		{
 			name:          "SIGINT_fast_shutdown",
 			shutdownCmd:   []string{"pkill", "-INT", "postgres"},
-			expectedCodes: []string{"57P01", "use of closed network connection"},
-			description:   "Fast shutdown produces CANNOT_CONNECT_NOW (57P03)",
+			expectedCodes: []string{"57014", "57P01", "use of closed network connection"},
+			description:   "Fast shutdown produces QUERY_CANCELED (57014) or ADMIN_SHUTDOWN (57P01)",
 		},
 		{
 			name:          "SIGQUIT_immediate_shutdown",
