@@ -1,0 +1,16 @@
+{
+  "packages": {
+    ".": {
+      "release-type": "go",
+      "package-name": "timescaledb-parallel-copy",
+      "bump-minor-pre-major": true,
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "cmd/timescaledb-parallel-copy/main.go",
+          "glob": false
+        }
+      ]
+    }
+  }
+}
