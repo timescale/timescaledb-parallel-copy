@@ -566,6 +566,7 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 
 var recoverableErrors = []string{
 	"53100", // No space left on device (SQLSTATE 53100)
+	"57014", // canceling statement due to user request (SQLSTATE 57014)
 	"57P01", // terminating connection due to administrator command (SQLSTATE 57P01)
 	"57P03", // the database system is shutting down (SQLSTATE 57P03)
 	"use of closed network connection",
