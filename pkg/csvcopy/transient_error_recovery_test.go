@@ -385,7 +385,7 @@ func generateCsvData(rowCount int) string {
 	baseTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < rowCount; i++ {
 		timestamp := baseTime.Add(time.Duration(i) * time.Minute)
-		sb.WriteString(fmt.Sprintf("%d,%s,%f\n", i%1000, timestamp.Format(time.RFC3339), rand.Float64()*100))
+		fmt.Fprintf(&sb, "%d,%s,%f\n", i%1000, timestamp.Format(time.RFC3339), rand.Float64()*100)
 	}
 	return sb.String()
 }
