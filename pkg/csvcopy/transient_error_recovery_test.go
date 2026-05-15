@@ -76,7 +76,7 @@ func TestDiskSpaceExhaustionAndRecovery(t *testing.T) {
 	require.Equal(t, 0, exitCode, ballastMsg)
 
 	// Generate large dataset
-	csvData := generateCsvData(rowCount)
+	csvData := generateCsvData(t, rowCount)
 
 	importID := fmt.Sprintf("test-import-%d", time.Now().Unix())
 
@@ -166,7 +166,7 @@ func TestDatabaseShutdownScenarios(t *testing.T) {
 			require.NoError(t, err)
 
 			rowCount := 300_000
-			csvData := generateCsvData(rowCount)
+			csvData := generateCsvData(t, rowCount)
 
 			logger := testLogger{t: t}
 
@@ -243,7 +243,7 @@ func TestCopyStartedDuringGracefulShutdown(t *testing.T) {
 	require.Equal(t, 0, exitCode, "shutdown command failed: %s", msg)
 
 	// Try copy operations at varying delays to catch different shutdown phases
-	csvData := generateCsvData(1000)
+	csvData := generateCsvData(t, 1000)
 
 	logger := testLogger{t: t}
 
@@ -380,12 +380,14 @@ func createLimitedDiskContainer(t *testing.T, ctx context.Context, diskSizeMB in
 	return pgContainer
 }
 
-func generateCsvData(rowCount int) string {
+func generateCsvData(t *testing.T, rowCount int) string {
+	t.Helper()
 	var sb strings.Builder
 	baseTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < rowCount; i++ {
 		timestamp := baseTime.Add(time.Duration(i) * time.Minute)
-		sb.WriteString(fmt.Sprintf("%d,%s,%f\n", i%1000, timestamp.Format(time.RFC3339), rand.Float64()*100))
+		_, err := fmt.Fprintf(&sb, "%d,%s,%f\n", i%1000, timestamp.Format(time.RFC3339), rand.Float64()*100)
+		require.NoError(t, err)
 	}
 	return sb.String()
 }
