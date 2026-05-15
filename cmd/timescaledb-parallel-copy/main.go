@@ -108,7 +108,7 @@ func init() {
 	flag.BoolVar(&showVersion, "version", false, "Show the version of this tool")
 
 	flag.BoolVar(&disableDirectCompress, "disable-direct-compress", false, "Disable using direct compress to write data to TimescaleDB")
-	flag.BoolVar(&clientSideSorting, "enable-client-side-sorting", false, "Guaranteed data order in place on the client side")
+	flag.BoolVar(&clientSideSorting, "dangerously-enable-client-side-sorting", false, "Dangerous: Guarantees that data is pre-sorted, and that every batch is non-overlapping, see TimescaleDB GUC enable_direct_compress_copy_client_sorted")
 
 	flag.BoolVar(&windows1252HandlingDisabled, "disable-windows-1252-handling", false, "Disable automatic encoding handling")
 
