@@ -195,7 +195,7 @@ func (c *Copier) Truncate() (err error) {
 		err = dbx.Close()
 	}()
 	if c.verbose {
-		c.LogInfo(context.TODO(), fmt.Sprintf("Truncating table %s", c.GetFullTableName()))
+		c.LogInfo(context.TODO(), "Truncating table %s", c.GetFullTableName())
 	}
 	_, err = dbx.Exec(fmt.Sprintf("TRUNCATE %s", c.GetFullTableName()))
 	if err != nil {
@@ -212,11 +212,9 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	// Reporting thread
 	if c.reportingPeriod > (0 * time.Second) {
 		c.Logger.Infof("There will be reports every %s", c.reportingPeriod.String())
-		supportWg.Add(1)
-		go func() {
-			defer supportWg.Done()
+		supportWg.Go(func() {
 			c.report(supportCtx)
-		}()
+		})
 	}
 
 	if c.HasImportID() {
@@ -305,9 +303,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	}
 
 	start := time.Now()
-	workerWg.Add(1)
-	go func() {
-		defer workerWg.Done()
+	workerWg.Go(func() {
 		pool := buffer.NewPool(1+queueSize+c.workers, c.batchByteSize)
 		if err := scan(ctx, pool, c.LogInfo, counter, bufferedReader, batchChan, opts); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
@@ -315,7 +311,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		}
 		close(batchChan)
 		c.LogInfo(ctx, "stop scan")
-	}()
+	})
 	workerWg.Wait()
 
 	cancelSupportCtx()
@@ -529,8 +525,8 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 
 	if c.verbose {
 		c.LogInfo(ctx, "connected to service")
-		c.LogInfo(ctx, fmt.Sprintf("setting direct compress to '%t' for the session", c.directCompress))
-		c.LogInfo(ctx, fmt.Sprintf("setting client side sorting to '%t' for the session", c.clientSideSorting))
+		c.LogInfo(ctx, "setting direct compress to '%t' for the session", c.directCompress)
+		c.LogInfo(ctx, "setting client side sorting to '%t' for the session", c.clientSideSorting)
 	}
 
 	// set Direct Compress GUCs for session
