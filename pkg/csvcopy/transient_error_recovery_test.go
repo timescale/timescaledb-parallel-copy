@@ -9,6 +9,7 @@ import (
 	"net"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,20 +26,33 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-type testLogger struct{
+type testLogger struct {
 	t *testing.T
+
+	// mu guards messages: the copier logs from several goroutines while
+	// waitForMessage reads, and bytes.Buffer is not safe for concurrent use.
+	mu       sync.Mutex
 	messages bytes.Buffer
 }
 
 func (l *testLogger) Infof(msg string, args ...interface{}) {
+	l.mu.Lock()
 	l.messages.WriteString(fmt.Sprintf(msg, args...) + "\n")
+	l.mu.Unlock()
 	l.t.Logf(msg, args...)
 }
 
 func (l *testLogger) waitForMessage(message string) {
-	for !strings.Contains(l.messages.String(), message) {
+	for !l.contains(message) {
 		time.Sleep(1 * time.Millisecond)
 	}
+}
+
+func (l *testLogger) contains(message string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return strings.Contains(l.messages.String(), message)
 }
 
 // TestDiskSpaceExhaustionAndRecovery tests writing to a database whose disk fills, and then more space is

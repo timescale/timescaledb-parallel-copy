@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sync"
 )
 
 // Pool provides a pool of Seekable buffers.
@@ -13,7 +14,12 @@ import (
 type Pool struct {
 	buffers    chan *Seekable
 	bufferSize int
-	size       int
+
+	// mu guards size. Allocation is a check-then-increment, so without it two
+	// callers can both observe size < capacity and both allocate, taking the
+	// pool past its capacity. put would then block forever on the full channel.
+	mu   sync.Mutex
+	size int
 }
 
 func NewPool(capacity int, bufferSize int) *Pool {
@@ -29,6 +35,8 @@ func NewPool(capacity int, bufferSize int) *Pool {
 // If no items are available, and the pool is at capacity, it blocks.
 // If the context is cancelled, returns nil and the context's error.
 // To return a Seekable to the pool, call Close on the Seekable.
+//
+// Get is safe for concurrent use.
 func (b *Pool) Get(ctx context.Context) (*Seekable, error) {
 	select {
 	case buf := <-b.buffers:
@@ -36,13 +44,7 @@ func (b *Pool) Get(ctx context.Context) (*Seekable, error) {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
-		if b.size < cap(b.buffers) {
-			b.size += 1
-			buf := &Seekable{
-				buf:      make([]byte, 0, b.bufferSize),
-				position: 0,
-				pool:     b,
-			}
+		if buf := b.tryAllocate(); buf != nil {
 			return buf, nil
 		}
 		select {
@@ -51,6 +53,25 @@ func (b *Pool) Get(ctx context.Context) (*Seekable, error) {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
+	}
+}
+
+// tryAllocate returns a newly allocated Seekable, or nil if the pool is already
+// at capacity. The check and the increment are one critical section so the pool
+// never hands out more buffers than it can take back.
+func (b *Pool) tryAllocate() *Seekable {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.size >= cap(b.buffers) {
+		return nil
+	}
+	b.size += 1
+
+	return &Seekable{
+		buf:      make([]byte, 0, b.bufferSize),
+		position: 0,
+		pool:     b,
 	}
 }
 
