@@ -130,13 +130,13 @@ func TestPartialReads(t *testing.T) {
 	sb := NewSeekable(data)
 
 	// Test reading in small chunks
-	result := ""
+	var result strings.Builder
 	buf := make([]byte, 3)
 
 	for {
 		n, err := sb.Read(buf)
 		if n > 0 {
-			result += string(buf[:n])
+			result.WriteString(string(buf[:n]))
 		}
 		if err == io.EOF {
 			break
@@ -147,8 +147,8 @@ func TestPartialReads(t *testing.T) {
 	}
 
 	expected := "abcdefghijklmno"
-	if result != expected {
-		t.Errorf("Partial reads result = %q, want %q", result, expected)
+	if result.String() != expected {
+		t.Errorf("Partial reads result = %q, want %q", result.String(), expected)
 	}
 }
 

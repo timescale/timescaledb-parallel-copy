@@ -95,11 +95,11 @@ type Copier struct {
 	clientSideSorting bool
 
 	// Rows that are inserted in the database by this copier instance
-	insertedRows int64
+	insertedRows atomic.Int64
 	// Rows that are skipped because they were already processed
-	skippedRows int64
+	skippedRows atomic.Int64
 	// Total rows read from the source
-	totalRows int64
+	totalRows atomic.Int64
 
 	failHandler BatchErrorHandler
 
@@ -587,7 +587,7 @@ func isRecoverableError(err error) bool {
 func (c *Copier) handleBatch(ctx context.Context, batch Batch, dbx *sqlx.DB, copyCmd string, depth int) error {
 	c.LogInfo(ctx, "Handling batch. id %s, startRow: %d, depth %d", batch.Location.ImportID, batch.Location.StartRow, depth)
 	defer batch.Close() //nolint:errcheck // no error returned
-	atomic.AddInt64(&c.totalRows, int64(batch.Location.RowCount))
+	c.totalRows.Add(int64(batch.Location.RowCount))
 
 	if c.logBatches {
 		c.LogInfo(ctx, "Processing: starting at row %d: rows count %d, byte len %d",
@@ -622,10 +622,10 @@ func (c *Copier) handleBatch(ctx context.Context, batch Batch, dbx *sqlx.DB, cop
 			c.LogError(ctx, "Error handler failed for batch %d: %v", batch.Location.StartRow, handleErr)
 			return handleErr
 		}
-		atomic.AddInt64(&c.skippedRows, handleResult.SkippedRows)
+		c.skippedRows.Add(handleResult.SkippedRows)
 		rows = handleResult.InsertedRows
 	}
-	atomic.AddInt64(&c.insertedRows, rows)
+	c.insertedRows.Add(rows)
 
 	if c.logBatches {
 		took := time.Since(start)
@@ -861,15 +861,15 @@ func (c *Copier) GetSchemaName() string {
 }
 
 func (c *Copier) GetInsertedRows() int64 {
-	return atomic.LoadInt64(&c.insertedRows)
+	return c.insertedRows.Load()
 }
 
 func (c *Copier) GetSkippedRows() int64 {
-	return atomic.LoadInt64(&c.skippedRows)
+	return c.skippedRows.Load()
 }
 
 func (c *Copier) GetTotalRows() int64 {
-	return atomic.LoadInt64(&c.totalRows)
+	return c.totalRows.Load()
 }
 
 func (c *Copier) HasImportID() bool {
