@@ -1,8 +1,17 @@
 version: "2"
 linters:
   enable:
-    - staticcheck
     - govet
     - ineffassign
+    - modernize
     - staticcheck
     - unused
+  settings:
+    modernize:
+      disable:
+        # omitzero rewrites `omitempty` on non-pointer struct fields, which
+        # changes serialized output rather than preserving behavior.
+        - omitzero
+        # newexpr rewrites pointer helpers such as lo.ToPtr(x) into new(x); the
+        # new(expr) form is Go 1.26-only and reads less clearly at call sites.
+        - newexpr

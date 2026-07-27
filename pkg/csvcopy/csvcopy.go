@@ -104,29 +104,29 @@ type Copier struct {
 	failHandler BatchErrorHandler
 
 	windows1252Handling bool
-	useWindows1252 atomic.Bool
+	useWindows1252      atomic.Bool
 
 	retryOnRecoverableError bool
-	retryTimeout time.Duration
+	retryTimeout            time.Duration
 
 	recoveryStartedAt atomic.Pointer[time.Time]
 }
 
 // LogInfo logs a message with worker ID extracted from context if available
-func (c *Copier) LogInfo(ctx context.Context, msg string, args ...interface{}) {
+func (c *Copier) LogInfo(ctx context.Context, msg string, args ...any) {
 	if !c.verbose {
 		return
 	}
 	if workerID := GetWorkerIDFromContext(ctx); workerID >= 0 {
-		c.Logger.Infof("[WORKER-%d] "+msg, append([]interface{}{workerID}, args...)...)
+		c.Logger.Infof("[WORKER-%d] "+msg, append([]any{workerID}, args...)...)
 	} else {
 		c.Logger.Infof(msg, args...)
 	}
 }
 
-func (c *Copier) LogError(ctx context.Context, msg string, args ...interface{}) {
+func (c *Copier) LogError(ctx context.Context, msg string, args ...any) {
 	if workerID := GetWorkerIDFromContext(ctx); workerID >= 0 {
-		c.Logger.Infof("[WORKER-%d] "+msg, append([]interface{}{workerID}, args...)...)
+		c.Logger.Infof("[WORKER-%d] "+msg, append([]any{workerID}, args...)...)
 	} else {
 		c.Logger.Infof(msg, args...)
 	}
@@ -142,30 +142,30 @@ func NewCopier(
 		tableName:  tableName,
 
 		// Defaults
-		schemaName:        "public",
-		Logger:            &noopLogger{},
-		copyOptions:       "CSV",
-		splitCharacter:    ",",
-		quoteCharacter:    "",
-		escapeCharacter:   "",
-		columns:           "",
-		workers:           1,
-		queueSize:         0,
-		limit:             0,
-		bufferSize:        2 * 1024 * 1024,
-		batchByteSize:     4 * 1024 * 1024,
-		batchSize:         5000,
-		logBatches:        false,
-		reportingPeriod:   0,
-		verbose:           false,
-		skip:              0,
-		importID:          "",
-		idempotencyWindow: 28 * 24 * time.Hour, // 4 weeks
-		directCompress:    false,
-		clientSideSorting: false,
-		windows1252Handling: false,
+		schemaName:              "public",
+		Logger:                  &noopLogger{},
+		copyOptions:             "CSV",
+		splitCharacter:          ",",
+		quoteCharacter:          "",
+		escapeCharacter:         "",
+		columns:                 "",
+		workers:                 1,
+		queueSize:               0,
+		limit:                   0,
+		bufferSize:              2 * 1024 * 1024,
+		batchByteSize:           4 * 1024 * 1024,
+		batchSize:               5000,
+		logBatches:              false,
+		reportingPeriod:         0,
+		verbose:                 false,
+		skip:                    0,
+		importID:                "",
+		idempotencyWindow:       28 * 24 * time.Hour, // 4 weeks
+		directCompress:          false,
+		clientSideSorting:       false,
+		windows1252Handling:     false,
 		retryOnRecoverableError: false,
-		retryTimeout: 5 * time.Minute,
+		retryTimeout:            5 * time.Minute,
 	}
 
 	for _, o := range options {

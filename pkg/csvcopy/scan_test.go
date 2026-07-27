@@ -470,7 +470,7 @@ d"
 			}
 
 			counter := &CountReader{Reader: reader}
-			bufferSize := 2*1024*1024
+			bufferSize := 2 * 1024 * 1024
 			bufferedReader := bufio.NewReaderSize(counter, bufferSize)
 
 			// Skip headers if needed
@@ -581,7 +581,7 @@ func BenchmarkScan(b *testing.B) {
 		// both.)
 		escType := "standard"
 
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			name := fmt.Sprintf("%s (%s escapes)", bm.name, escType)
 
 			b.Run(name, func(b *testing.B) {
@@ -630,4 +630,4 @@ func RandString(n int) string {
 	return string(b)
 }
 
-var noopLoggerFunc = func(ctx context.Context, msg string, args ...interface{}) {}
+var noopLoggerFunc = func(ctx context.Context, msg string, args ...any) {}

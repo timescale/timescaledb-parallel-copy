@@ -236,20 +236,20 @@ func TestWriteDataToCSVWithHeader(t *testing.T) {
 }
 
 func TestWriteWindows1252EncodedDataWithHeader(t *testing.T) {
-	cases := []struct{
-		name string
+	cases := []struct {
+		name                string
 		windows1252Handling bool
-		errorContains string
-	} {
+		errorContains       string
+	}{
 		{
-			name: "WithWindows1252Handling off",
+			name:                "WithWindows1252Handling off",
 			windows1252Handling: false,
-			errorContains: "invalid byte sequence for encoding \"UTF8\"",
+			errorContains:       "invalid byte sequence for encoding \"UTF8\"",
 		},
 		{
-			name: "WithWindows1252Handling on",
+			name:                "WithWindows1252Handling on",
 			windows1252Handling: true,
-			errorContains: "",
+			errorContains:       "",
 		},
 	}
 
@@ -880,13 +880,13 @@ func TestWriteReportProgress(t *testing.T) {
 	require.True(t, hasNext)
 	results, err := rows.Values()
 	require.NoError(t, err)
-	assert.Equal(t, []interface{}{int32(42), "xasev", 4.2}, results)
+	assert.Equal(t, []any{int32(42), "xasev", 4.2}, results)
 
 	hasNext = rows.Next()
 	require.True(t, hasNext)
 	results, err = rows.Values()
 	require.NoError(t, err)
-	assert.Equal(t, []interface{}{int32(24), "qased", 2.4}, results)
+	assert.Equal(t, []any{int32(24), "qased", 2.4}, results)
 }
 
 func TestFailedBatchHandlerContinue(t *testing.T) {
