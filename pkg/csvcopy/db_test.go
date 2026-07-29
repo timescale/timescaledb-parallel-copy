@@ -40,7 +40,7 @@ func TestCopyFromLines(t *testing.T) {
 		columns  string
 		copyCmd  string
 		lines    []string
-		expected [][]interface{}
+		expected [][]any
 	}{
 		{
 			name:    "simple types with basic CSV",
@@ -53,7 +53,7 @@ func TestCopyFromLines(t *testing.T) {
 				"  more\twhitespace  ,0",
 				",",
 			},
-			expected: [][]interface{}{
+			expected: [][]any{
 				{"a", int64(34)},
 				{"null", int64(42)},
 				{"some whitespace", int64(-13)},
@@ -70,7 +70,7 @@ func TestCopyFromLines(t *testing.T) {
 				"b\t42",
 				"\"c\td\"\t0",
 			},
-			expected: [][]interface{}{
+			expected: [][]any{
 				{"a", int64(34)},
 				{"b", int64(42)},
 				{"c\td", int64(0)},
@@ -88,7 +88,7 @@ func TestCopyFromLines(t *testing.T) {
 				`"multi`,
 				`line column"`,
 			},
-			expected: [][]interface{}{
+			expected: [][]any{
 				{nil},
 				{""},
 				{"quoted,delimiter\\t"},
@@ -104,7 +104,7 @@ func TestCopyFromLines(t *testing.T) {
 				"a,34",
 				"b,42",
 			},
-			expected: [][]interface{}{
+			expected: [][]any{
 				{nil, "a", int64(34)},
 				{nil, "b", int64(42)},
 			},
@@ -119,7 +119,7 @@ func TestCopyFromLines(t *testing.T) {
 				"b,NULL",
 				"c,3",
 			},
-			expected: [][]interface{}{
+			expected: [][]any{
 				{"a", int64(1)},
 				{nil, int64(2)},
 				{"b", nil},
@@ -134,7 +134,7 @@ func TestCopyFromLines(t *testing.T) {
 				`\x68656c6c6f20776f726c64`,
 				`\x666f6f626172`,
 			},
-			expected: [][]interface{}{
+			expected: [][]any{
 				{[]byte("hello world")},
 				{[]byte("foobar")},
 			},
@@ -163,7 +163,7 @@ func TestCopyFromLines(t *testing.T) {
 				t.Fatalf("d.Queryx() failed: %v", err)
 			}
 
-			var actualData [][]interface{}
+			var actualData [][]any
 			var actualCount int64
 
 			for rows.Next() {

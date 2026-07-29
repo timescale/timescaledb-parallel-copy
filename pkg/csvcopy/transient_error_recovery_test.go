@@ -9,6 +9,7 @@ import (
 	"net"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,20 +26,33 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-type testLogger struct{
+type testLogger struct {
 	t *testing.T
+
+	// mu guards messages: the copier logs from several goroutines while
+	// waitForMessage reads, and bytes.Buffer is not safe for concurrent use.
+	mu       sync.Mutex
 	messages bytes.Buffer
 }
 
-func (l *testLogger) Infof(msg string, args ...interface{}) {
+func (l *testLogger) Infof(msg string, args ...any) {
+	l.mu.Lock()
 	l.messages.WriteString(fmt.Sprintf(msg, args...) + "\n")
+	l.mu.Unlock()
 	l.t.Logf(msg, args...)
 }
 
 func (l *testLogger) waitForMessage(message string) {
-	for !strings.Contains(l.messages.String(), message) {
+	for !l.contains(message) {
 		time.Sleep(1 * time.Millisecond)
 	}
+}
+
+func (l *testLogger) contains(message string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return strings.Contains(l.messages.String(), message)
 }
 
 // TestDiskSpaceExhaustionAndRecovery tests writing to a database whose disk fills, and then more space is
@@ -384,14 +398,13 @@ func generateCsvData(t *testing.T, rowCount int) string {
 	t.Helper()
 	var sb strings.Builder
 	baseTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	for i := 0; i < rowCount; i++ {
+	for i := range rowCount {
 		timestamp := baseTime.Add(time.Duration(i) * time.Minute)
 		_, err := fmt.Fprintf(&sb, "%d,%s,%f\n", i%1000, timestamp.Format(time.RFC3339), rand.Float64()*100)
 		require.NoError(t, err)
 	}
 	return sb.String()
 }
-
 
 func randomPort() (int, error) {
 	l, err := net.Listen("tcp", ":0")
@@ -402,7 +415,6 @@ func randomPort() (int, error) {
 	l.Close() //nolint:errcheck
 	return port, nil
 }
-
 
 func runContainer(t *testing.T, opts ...testcontainers.ContainerCustomizer) (*postgres.PostgresContainer, error) {
 	ctx := context.Background()
@@ -440,7 +452,7 @@ func runContainer(t *testing.T, opts ...testcontainers.ContainerCustomizer) (*po
 		postgres.WithPassword("postgres"),
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).WithStartupTimeout(30*time.Second)),
+				WithOccurrence(2).WithStartupTimeout(30 * time.Second)),
 		testcontainers.WithConfigModifier(func(config *container.Config) {
 			config.Cmd = append(config.Cmd, "-c", "tsdb_admin.protected_roles='foo,bar,baz'")
 		}),
@@ -459,7 +471,7 @@ func runContainer(t *testing.T, opts ...testcontainers.ContainerCustomizer) (*po
 	allOpts := slices.Concat(ownOpts, opts)
 	pgContainer, err := postgres.Run(ctx,
 		"postgres:15.3-alpine",
-		allOpts...
+		allOpts...,
 	)
 	if err != nil {
 		return nil, err

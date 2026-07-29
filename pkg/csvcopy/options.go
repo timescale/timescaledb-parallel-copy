@@ -13,12 +13,12 @@ import (
 type Option func(c *Copier) error
 
 type Logger interface {
-	Infof(msg string, args ...interface{})
+	Infof(msg string, args ...any)
 }
 
 type noopLogger struct{}
 
-func (l *noopLogger) Infof(msg string, args ...interface{}) {}
+func (l *noopLogger) Infof(msg string, args ...any) {}
 
 // WithLogger sets the logger where the application will print debug messages
 func WithLogger(logger Logger) Option {

@@ -61,11 +61,11 @@ var (
 	dbName string
 
 	disableDirectCompress bool
-	clientSideSorting bool
+	clientSideSorting     bool
 
 	windows1252HandlingDisabled bool
 
-	noRetry bool
+	noRetry      bool
 	retryTimeout time.Duration
 )
 
@@ -120,7 +120,7 @@ func init() {
 
 type csvCopierLogger struct{}
 
-func (l csvCopierLogger) Infof(msg string, args ...interface{}) {
+func (l csvCopierLogger) Infof(msg string, args ...any) {
 	log.Printf(msg, args...)
 }
 
@@ -137,7 +137,6 @@ func main() {
 	if headerLinesCnt != 1 {
 		log.Fatalf("Error: -header-line-count is deprecated. Use -skip-lines instead")
 	}
-
 
 	logger := &csvCopierLogger{}
 

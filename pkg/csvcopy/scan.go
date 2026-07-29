@@ -114,7 +114,7 @@ func (l Location) HasImportID() bool {
 //
 // The caller is responsible for setting up the CountReader and buffered reader,
 // and for skipping any headers before calling this function.
-func scan(ctx context.Context, pool *buffer.Pool, logger func(ctx context.Context, msg string, args ...interface{}),
+func scan(ctx context.Context, pool *buffer.Pool, logger func(ctx context.Context, msg string, args ...any),
 	counter *CountReader, reader *bufio.Reader, out chan<- Batch, opts scanOptions) error {
 	var rowsRead int64
 

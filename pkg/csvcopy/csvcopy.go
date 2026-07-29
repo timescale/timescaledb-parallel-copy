@@ -95,38 +95,38 @@ type Copier struct {
 	clientSideSorting bool
 
 	// Rows that are inserted in the database by this copier instance
-	insertedRows int64
+	insertedRows atomic.Int64
 	// Rows that are skipped because they were already processed
-	skippedRows int64
+	skippedRows atomic.Int64
 	// Total rows read from the source
-	totalRows int64
+	totalRows atomic.Int64
 
 	failHandler BatchErrorHandler
 
 	windows1252Handling bool
-	useWindows1252 atomic.Bool
+	useWindows1252      atomic.Bool
 
 	retryOnRecoverableError bool
-	retryTimeout time.Duration
+	retryTimeout            time.Duration
 
 	recoveryStartedAt atomic.Pointer[time.Time]
 }
 
 // LogInfo logs a message with worker ID extracted from context if available
-func (c *Copier) LogInfo(ctx context.Context, msg string, args ...interface{}) {
+func (c *Copier) LogInfo(ctx context.Context, msg string, args ...any) {
 	if !c.verbose {
 		return
 	}
 	if workerID := GetWorkerIDFromContext(ctx); workerID >= 0 {
-		c.Logger.Infof("[WORKER-%d] "+msg, append([]interface{}{workerID}, args...)...)
+		c.Logger.Infof("[WORKER-%d] "+msg, append([]any{workerID}, args...)...)
 	} else {
 		c.Logger.Infof(msg, args...)
 	}
 }
 
-func (c *Copier) LogError(ctx context.Context, msg string, args ...interface{}) {
+func (c *Copier) LogError(ctx context.Context, msg string, args ...any) {
 	if workerID := GetWorkerIDFromContext(ctx); workerID >= 0 {
-		c.Logger.Infof("[WORKER-%d] "+msg, append([]interface{}{workerID}, args...)...)
+		c.Logger.Infof("[WORKER-%d] "+msg, append([]any{workerID}, args...)...)
 	} else {
 		c.Logger.Infof(msg, args...)
 	}
@@ -142,30 +142,30 @@ func NewCopier(
 		tableName:  tableName,
 
 		// Defaults
-		schemaName:        "public",
-		Logger:            &noopLogger{},
-		copyOptions:       "CSV",
-		splitCharacter:    ",",
-		quoteCharacter:    "",
-		escapeCharacter:   "",
-		columns:           "",
-		workers:           1,
-		queueSize:         0,
-		limit:             0,
-		bufferSize:        2 * 1024 * 1024,
-		batchByteSize:     4 * 1024 * 1024,
-		batchSize:         5000,
-		logBatches:        false,
-		reportingPeriod:   0,
-		verbose:           false,
-		skip:              0,
-		importID:          "",
-		idempotencyWindow: 28 * 24 * time.Hour, // 4 weeks
-		directCompress:    false,
-		clientSideSorting: false,
-		windows1252Handling: false,
+		schemaName:              "public",
+		Logger:                  &noopLogger{},
+		copyOptions:             "CSV",
+		splitCharacter:          ",",
+		quoteCharacter:          "",
+		escapeCharacter:         "",
+		columns:                 "",
+		workers:                 1,
+		queueSize:               0,
+		limit:                   0,
+		bufferSize:              2 * 1024 * 1024,
+		batchByteSize:           4 * 1024 * 1024,
+		batchSize:               5000,
+		logBatches:              false,
+		reportingPeriod:         0,
+		verbose:                 false,
+		skip:                    0,
+		importID:                "",
+		idempotencyWindow:       28 * 24 * time.Hour, // 4 weeks
+		directCompress:          false,
+		clientSideSorting:       false,
+		windows1252Handling:     false,
 		retryOnRecoverableError: false,
-		retryTimeout: 5 * time.Minute,
+		retryTimeout:            5 * time.Minute,
 	}
 
 	for _, o := range options {
@@ -195,7 +195,7 @@ func (c *Copier) Truncate() (err error) {
 		err = dbx.Close()
 	}()
 	if c.verbose {
-		c.LogInfo(context.TODO(), fmt.Sprintf("Truncating table %s", c.GetFullTableName()))
+		c.LogInfo(context.TODO(), "Truncating table %s", c.GetFullTableName())
 	}
 	_, err = dbx.Exec(fmt.Sprintf("TRUNCATE %s", c.GetFullTableName()))
 	if err != nil {
@@ -212,11 +212,9 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	// Reporting thread
 	if c.reportingPeriod > (0 * time.Second) {
 		c.Logger.Infof("There will be reports every %s", c.reportingPeriod.String())
-		supportWg.Add(1)
-		go func() {
-			defer supportWg.Done()
+		supportWg.Go(func() {
 			c.report(supportCtx)
-		}()
+		})
 	}
 
 	if c.HasImportID() {
@@ -305,9 +303,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 	}
 
 	start := time.Now()
-	workerWg.Add(1)
-	go func() {
-		defer workerWg.Done()
+	workerWg.Go(func() {
 		pool := buffer.NewPool(1+queueSize+c.workers, c.batchByteSize)
 		if err := scan(ctx, pool, c.LogInfo, counter, bufferedReader, batchChan, opts); err != nil {
 			errCh <- fmt.Errorf("failed reading input: %w", err)
@@ -315,7 +311,7 @@ func (c *Copier) Copy(ctx context.Context, reader io.Reader) (Result, error) {
 		}
 		close(batchChan)
 		c.LogInfo(ctx, "stop scan")
-	}()
+	})
 	workerWg.Wait()
 
 	cancelSupportCtx()
@@ -529,8 +525,8 @@ func (c *Copier) processBatches(ctx context.Context, ch chan Batch, workerID int
 
 	if c.verbose {
 		c.LogInfo(ctx, "connected to service")
-		c.LogInfo(ctx, fmt.Sprintf("setting direct compress to '%t' for the session", c.directCompress))
-		c.LogInfo(ctx, fmt.Sprintf("setting client side sorting to '%t' for the session", c.clientSideSorting))
+		c.LogInfo(ctx, "setting direct compress to '%t' for the session", c.directCompress)
+		c.LogInfo(ctx, "setting client side sorting to '%t' for the session", c.clientSideSorting)
 	}
 
 	// set Direct Compress GUCs for session
@@ -587,7 +583,7 @@ func isRecoverableError(err error) bool {
 func (c *Copier) handleBatch(ctx context.Context, batch Batch, dbx *sqlx.DB, copyCmd string, depth int) error {
 	c.LogInfo(ctx, "Handling batch. id %s, startRow: %d, depth %d", batch.Location.ImportID, batch.Location.StartRow, depth)
 	defer batch.Close() //nolint:errcheck // no error returned
-	atomic.AddInt64(&c.totalRows, int64(batch.Location.RowCount))
+	c.totalRows.Add(int64(batch.Location.RowCount))
 
 	if c.logBatches {
 		c.LogInfo(ctx, "Processing: starting at row %d: rows count %d, byte len %d",
@@ -622,10 +618,10 @@ func (c *Copier) handleBatch(ctx context.Context, batch Batch, dbx *sqlx.DB, cop
 			c.LogError(ctx, "Error handler failed for batch %d: %v", batch.Location.StartRow, handleErr)
 			return handleErr
 		}
-		atomic.AddInt64(&c.skippedRows, handleResult.SkippedRows)
+		c.skippedRows.Add(handleResult.SkippedRows)
 		rows = handleResult.InsertedRows
 	}
-	atomic.AddInt64(&c.insertedRows, rows)
+	c.insertedRows.Add(rows)
 
 	if c.logBatches {
 		took := time.Since(start)
@@ -861,15 +857,15 @@ func (c *Copier) GetSchemaName() string {
 }
 
 func (c *Copier) GetInsertedRows() int64 {
-	return atomic.LoadInt64(&c.insertedRows)
+	return c.insertedRows.Load()
 }
 
 func (c *Copier) GetSkippedRows() int64 {
-	return atomic.LoadInt64(&c.skippedRows)
+	return c.skippedRows.Load()
 }
 
 func (c *Copier) GetTotalRows() int64 {
-	return atomic.LoadInt64(&c.totalRows)
+	return c.totalRows.Load()
 }
 
 func (c *Copier) HasImportID() bool {
