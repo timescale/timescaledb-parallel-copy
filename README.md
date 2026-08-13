@@ -249,6 +249,55 @@ Usage of timescaledb-parallel-copy:
 ```
 
 
+## Streaming
+
+When you omit `--file`, the tool reads from standard input. This lets you
+copy data directly from a source into PostgreSQL without intermediate
+files or storage.
+
+### Stream from PostgreSQL to PostgreSQL
+
+Use `psql` to run `COPY ... TO STDOUT` on the source database and pipe
+the output into `timescaledb-parallel-copy`:
+
+```bash
+psql $AWS_SOURCE --csv -c "COPY (SELECT * FROM metrics) TO STDOUT WITH (FORMAT csv, HEADER)" \
+  | timescaledb-parallel-copy --connection $TARGET --schema public --table metrics \
+      --skip-header --workers 4 --import-id abc
+```
+
+### Stream files from Amazon S3
+
+Use the AWS CLI to stream an object to standard output and pipe it into
+the tool:
+
+```bash
+aws s3 cp s3://my-bucket/metrics.csv - \
+  | timescaledb-parallel-copy --connection $TARGET --schema public --table metrics \
+      --skip-header --workers 4 --import-id s3-metrics.csv
+```
+
+Add `aws s3 cp` to a loop to stream several objects in sequence.
+
+### Stream from MySQL to PostgreSQL
+
+Use the `mysql` client in batch mode to emit tab-separated rows and
+pipe them into the tool:
+
+```bash
+mysql --batch --skip-column-names -h $MYSQL_HOST -u $MYSQL_USER -p$MYSQL_PASSWORD $MYSQL_DB \
+  -e "SELECT * FROM metrics" \
+  | timescaledb-parallel-copy --connection $TARGET --schema public --table metrics \
+      --split $'\t' --copy-options "NULL 'NULL'" --workers 4
+```
+
+MySQL batch mode separates columns with tabs and escapes tab, newline,
+and backslash characters in values the same way PostgreSQL text format
+`COPY` does. The flags above match that format. MySQL prints `NULL`
+values as the literal string `NULL`; the `--copy-options` flag tells
+PostgreSQL to read that string as `NULL`. One restriction remains: a
+text value equal to the literal string `NULL` is imported as `NULL`.
+
 ## Purpose
 
 PostgreSQL native `COPY` function is transactional and single-threaded, and may not be suitable for ingesting large
@@ -279,6 +328,28 @@ $ TEST_CONNINFO='dbname=gotest user=myuser' go test -v ./...
 ```
 
 ## Advanced usage
+
+### Idempotency with `--import-id`
+
+Pass `--import-id` to make an import idempotent. The tool records each
+committed batch in the table `timescaledb_parallel_copy.transactions`
+under the given ID. If you run the same command again with the same ID,
+already committed batches are skipped. If a copy is interrupted, rerun
+the same command and it resumes from the last committed batch.
+
+This is useful for immutable sources, such as files in Amazon S3, and
+for append-only tables that you copy in ranges. For example, copy rows
+with `time < now()` on a schedule with a fixed ID per range. If the
+copy fails partway, the next run resumes from the last committed
+transaction cursor instead of starting over.
+
+```bash
+# Safe to rerun: committed batches are skipped
+timescaledb-parallel-copy --connection $DATABASE_URL --table metrics --file metrics.csv \
+    --import-id "metrics-2024-01"
+```
+
+Transaction records older than 28 days are removed automatically.
 
 ### Column Mapping
 
