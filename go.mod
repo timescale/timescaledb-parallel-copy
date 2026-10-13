@@ -3,7 +3,7 @@ module github.com/timescale/timescaledb-parallel-copy
 go 1.26.0
 
 require (
-	github.com/docker/docker v27.5.1+incompatible
+	github.com/docker/docker v28.0.0+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/jmoiron/sqlx v1.4.0
