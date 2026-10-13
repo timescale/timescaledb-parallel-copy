@@ -1,0 +1,126 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+    'mergeConfidence:all-badges',
+    'security:gomodIndirectSecurityUpdates',
+    'schedule:weekly',
+  ],
+  labels: [
+    'dependencies',
+  ],
+  semanticCommitType: 'chore',
+  vulnerabilityAlerts: {
+    schedule: [
+      'at any time',
+    ],
+  },
+  postUpdateOptions: [
+    'gomodTidy',
+  ],
+  dockerfile: {
+    enabled: false,
+  },
+  automerge: false,
+  packageRules: [
+    {
+      description: 'Group everything not handled by a more specific rule below',
+      groupName: 'common dependencies',
+      matchUpdateTypes: [
+        'digest',
+        'patch',
+        'minor',
+        'major',
+      ],
+    },
+    {
+      description: 'Group GitHub Actions updates into a single PR',
+      matchManagers: [
+        'github-actions',
+      ],
+      groupName: 'github actions',
+      matchUpdateTypes: [
+        'digest',
+        'patch',
+        'minor',
+        'major',
+      ],
+    },
+    {
+      description: 'Group docker-compose image updates into a single PR',
+      matchManagers: [
+        'docker-compose',
+      ],
+      groupName: 'docker-compose images',
+      matchUpdateTypes: [
+        'digest',
+        'patch',
+        'minor',
+        'major',
+      ],
+    },
+    {
+      description: 'Group all timescale module updates into a single PR',
+      matchManagers: [
+        'gomod',
+      ],
+      matchPackageNames: [
+        'github.com/timescale/**',
+        '!github.com/timescale/savannah-common/go/recommendations',
+      ],
+      groupName: 'timescale dependencies',
+      matchUpdateTypes: [
+        'digest',
+        'patch',
+        'minor',
+        'major',
+      ],
+    },
+    {
+      description: 'Isolate the untagged go/recommendations module (no tags, digest-only)',
+      matchManagers: [
+        'gomod',
+      ],
+      matchPackageNames: [
+        'github.com/timescale/savannah-common/go/recommendations',
+      ],
+      groupName: 'savannah-common/go/recommendations (untagged)',
+      matchUpdateTypes: [
+        'digest',
+      ],
+    },
+    {
+      description: 'Code-generation deps: isolate and flag the required manual `make gen`',
+      matchPackageNames: [
+        'github.com/99designs/gqlgen',
+        'github.com/vektah/gqlparser/v2',
+        'github.com/oapi-codegen/oapi-codegen/v2',
+        'github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen',
+      ],
+      groupName: 'codegen dependencies',
+      prBodyNotes: [
+        '> [!WARNING]\n> This bumps a code-generation dependency. `gocheck` will fail until someone runs `make gen` locally, commits the regenerated files, and pushes to this branch.',
+      ],
+    },
+    {
+      description: 'Indirect Go deps: skip abandonment flagging (transitive, not ours to replace)',
+      matchManagers: [
+        'gomod',
+      ],
+      matchDepTypes: [
+        'indirect',
+      ],
+      abandonmentThreshold: null,
+    },
+    {
+      description: "Go major bumps need /vN import-path rewrites Renovate can't do; dashboard-only, a human does it",
+      matchManagers: [
+        'gomod',
+      ],
+      matchUpdateTypes: [
+        'major',
+      ],
+      enabled: false,
+    },
+  ],
+}
