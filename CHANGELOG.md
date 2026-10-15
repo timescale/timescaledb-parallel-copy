@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.13.1](https://github.com/timescale/timescaledb-parallel-copy/compare/v0.13.0...v0.13.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/docker/docker to v28 [security] ([#164](https://github.com/timescale/timescaledb-parallel-copy/issues/164)) ([f7022ea](https://github.com/timescale/timescaledb-parallel-copy/commit/f7022ead1886d22e3f0a06450e13927a15352eb4))
+* **deps:** update module github.com/jackc/pgx/v5 to v5.9.2 [security] ([#163](https://github.com/timescale/timescaledb-parallel-copy/issues/163)) ([983f618](https://github.com/timescale/timescaledb-parallel-copy/commit/983f618dd6357962f31e5928f96b03df0367fa84))
+
 ## [0.13.0](https://github.com/timescale/timescaledb-parallel-copy/compare/v0.12.0...v0.13.0) (2026-05-15)
 
 
