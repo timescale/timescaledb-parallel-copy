@@ -793,8 +793,7 @@ func isServerEncodingUTF8(ctx context.Context, db *sqlx.DB) (isUtf8 bool, err er
 }
 
 func isTemporaryError(err error) bool {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		// Temporary errors: connection failures, resource issues
 		if pgErr.Code[:2] == "08" {
 			return true
