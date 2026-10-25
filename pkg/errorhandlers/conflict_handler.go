@@ -29,7 +29,6 @@ type ConflictHandlerConfig struct {
 // ConflictHandlerOption allows configuring the conflict handler
 type ConflictHandlerOption func(*ConflictHandlerConfig)
 
-
 // WithConflictHandlerNext sets the next batch error handler
 func WithConflictHandlerNext(next csvcopy.BatchErrorHandler) ConflictHandlerOption {
 	return func(config *ConflictHandlerConfig) {
@@ -121,5 +120,3 @@ func BatchConflictHandler(options ...ConflictHandlerOption) csvcopy.BatchErrorHa
 		}
 	})
 }
-
-
