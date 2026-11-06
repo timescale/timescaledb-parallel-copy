@@ -208,8 +208,8 @@ Usage of timescaledb-parallel-copy:
         (deprecated) Database where the destination table exists
   -disable-direct-compress
         Disable using direct compress to write data to TimescaleDB.
-  -enable-client-side-sorting
-        Guaranteed data order in place on the client side, can improve ingest performance. Default: off
+  -dangerously-enable-client-side-sorting
+        Dangerous: Guarantees that data is pre-sorted, and that every batch is non-overlapping, see TimescaleDB GUC enable_direct_compress_copy_client_sorted
   -escape character
         The ESCAPE character to use during COPY (default '"')
   -file string
