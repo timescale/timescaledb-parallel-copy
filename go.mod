@@ -1,6 +1,6 @@
 module github.com/timescale/timescaledb-parallel-copy
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/docker/docker v28.0.0+incompatible

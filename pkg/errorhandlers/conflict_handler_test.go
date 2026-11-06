@@ -264,4 +264,3 @@ func TestBatchConflictHandler_WithoutBatchConflictHandler(t *testing.T) {
 	}
 	assert.Equal(t, len(expectedRows), i, "Should have exactly %d rows", len(expectedRows))
 }
-
