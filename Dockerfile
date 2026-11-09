@@ -1,4 +1,4 @@
-FROM golang:1.26-alpine3.22 AS base
+FROM golang:1.27-alpine3.24 AS base
 
 WORKDIR /github.com/timescale/csv-importer
 
