@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.2](https://github.com/timescale/timescaledb-parallel-copy/compare/v0.13.1...v0.13.2) (2026-11-10)
+
+
+### Bug Fixes
+
+* **deps:** update dependencies ([b976957](https://github.com/timescale/timescaledb-parallel-copy/commit/b9769573a7e68a5dc47aa9fc4ff14595b0805f5f))
+
 ## [0.13.1](https://github.com/timescale/timescaledb-parallel-copy/compare/v0.13.0...v0.13.1) (2026-10-15)
 
 
