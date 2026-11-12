@@ -1,7 +1,226 @@
+// Copy of default.json5 and go.json5 from timescale/renovate-config at
+// a520923684. The Mend Renovate app does not resolve presets from that
+// private repo in a public repo, so the rules live here. Update this copy
+// by hand when the shared presets change.
+// The org default still applies secure-registry.json5, own-releases.json5
+// and security-alerts.json5. This repo has no npm packages, so it does not
+// extend own-releases.json5 again after config:best-practices.
 {
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  // config:best-practices adds digest pins for Docker images and GitHub
+  // Actions, configMigration and abandonment checks on top of
+  // config:recommended.
   extends: [
-    'local>timescale/renovate-config:default.json5',
-    'local>timescale/renovate-config:go.json5',
+    'config:best-practices',
+    'mergeConfidence:all-badges',
+    'schedule:weekly',
+    // The pre-commit manager is off by default. It updates the rev of each
+    // hook repo in .pre-commit-config.yaml (pre-commit and prek).
+    ':enablePreCommit',
+    // From go.json5.
+    'security:gomodIndirectSecurityUpdates',
+  ],
+  labels: [
+    'dependencies',
+  ],
+  semanticCommitType: 'chore',
+  minimumReleaseAge: '7 days',
+  prConcurrentLimit: 10,
+  mise: {
+    // The defaults cover .config/mise/conf.d but not .mise/conf.d.
+    managerFilePatterns: [
+      '/(^|/)\\.mise/conf\\.d/[^/]+\\.toml$/',
+    ],
+  },
+  customManagers: [
+    {
+      // Tracks any pin with a comment on the line above it, so a repo needs
+      // no own regex manager:
+      //   # renovate: datasource=<ds> depName=<name> [packageName=<p>] [versioning=<v>] [extractVersion=<re>]
+      customType: 'regex',
+      description: 'Pins annotated with a "# renovate:" comment',
+      managerFilePatterns: [
+        '/(^|/)Dockerfile[^/]*$/',
+        '/(^|/)[^/]*\\.Dockerfile$/',
+        '/(^|/)Makefile$/',
+        '/(^|/)[^/]*\\.mk$/',
+        // Any YAML: workflows, actions, compose, Helm values, k8s manifests.
+        '/\\.ya?ml$/',
+        '/\\.sh$/',
+        '/\\.toml$/',
+        '/\\.(tf|tfvars|hcl)$/',
+        '/(^|/)\\.env[^/]*$/',
+      ],
+      matchStrings: [
+        '# renovate: datasource=(?<datasource>[^\\s]+) depName=(?<depName>[^\\s]+)(?: packageName=(?<packageName>[^\\s]+))?(?: versioning=(?<versioning>[^\\s]+))?(?: extractVersion=(?<extractVersion>[^\\s]+))?\\s+[^\\n]*?(?::=|[:=])\\s*["\']?(?<currentValue>[^"\'\\s]+)',
+      ],
+      // A template wins over a capture group, so fall back only when the
+      // comment has no versioning.
+      versioningTemplate: '{{#if versioning}}{{{versioning}}}{{else}}semver-coerced{{/if}}',
+    },
+  ],
+  // gomodTidyAll also tidies every module that replaces the bumped one
+  // (multi-module repos), so their indirect pins follow the bump.
+  // gomodUpdateImportPaths rewrites the /vN import paths of a major bump.
+  postUpdateOptions: [
+    'gomodTidyAll',
+    'gomodUpdateImportPaths',
+  ],
+  packageRules: [
+    {
+      description: 'One weekly PR for every non-major update not handled by a more specific rule. Majors stay out so that one breaking bump does not block the rest.',
+      groupName: 'non-major dependencies',
+      // renovate-approve (installed on all org repos) approves the PR, and
+      // it merges when its checks pass. Only these update types: majors and
+      // lockfile maintenance (which can cross a major) stay manual.
+      automerge: true,
+      matchUpdateTypes: [
+        'digest',
+        'patch',
+        'minor',
+        'pin',
+        'pinDigest',
+      ],
+    },
+    {
+      description: 'Label major updates for manual review',
+      matchUpdateTypes: [
+        'major',
+      ],
+      addLabels: [
+        'major-update',
+      ],
+    },
+    {
+      description: 'Group GitHub Actions updates into a single PR, majors included',
+      matchManagers: [
+        'github-actions',
+      ],
+      groupName: 'github actions',
+      separateMajorMinor: false,
+    },
+    {
+      description: 'Group docker-compose image updates into a single PR',
+      matchManagers: [
+        'docker-compose',
+      ],
+      groupName: 'docker-compose images',
+    },
+    {
+      // config:best-practices sets npm to 3 days in a preset rule, which
+      // overrides the top-level 7 days. Lockfile, pin and other updates
+      // without a release timestamp keep the preset value. Our own packages
+      // are left out, so that the own-releases.json5 rule stays in effect.
+      description: 'npm: 7-day gate, same as every other datasource',
+      matchDatasources: [
+        'npm',
+      ],
+      matchPackageNames: [
+        '!@timescale/**',
+      ],
+      matchUpdateTypes: [
+        'major',
+        'minor',
+        'patch',
+      ],
+      minimumReleaseAge: '7 days',
+    },
+    // From go.json5. These rules come last, so they win over the rules above.
+    {
+      description: 'Group kubernetes SDKs into a single PR',
+      matchManagers: [
+        'gomod',
+      ],
+      matchPackageNames: [
+        'k8s.io/**',
+        'sigs.k8s.io/**',
+      ],
+      groupName: 'kubernetes SDKs',
+    },
+    {
+      // own-releases.json5 removes the age gate for these modules.
+      description: 'Group all timescale module updates into a single PR',
+      matchManagers: [
+        'gomod',
+      ],
+      matchPackageNames: [
+        'github.com/timescale/**',
+      ],
+      groupName: 'timescale dependencies',
+    },
+    {
+      description: 'Keep the Go version in sync across mise, go.mod toolchain and the golang Docker image',
+      matchDepNames: [
+        'go',
+        'golang',
+        '/(^|/)library/golang$/',
+      ],
+      groupName: 'go toolchain',
+    },
+    {
+      description: 'Indirect Go deps: skip abandonment flagging (transitive, not ours to replace)',
+      matchManagers: [
+        'gomod',
+      ],
+      matchDepTypes: [
+        'indirect',
+      ],
+      abandonmentThreshold: null,
+    },
+    {
+      // enabled: false drops the update before the dashboard sees it, so
+      // the approval keeps it visible.
+      description: 'Go major bumps: Renovate opens the PR only after a person approves it on the Dependency Dashboard',
+      matchManagers: [
+        'gomod',
+      ],
+      matchUpdateTypes: [
+        'major',
+      ],
+      dependencyDashboardApproval: true,
+    },
+    // mise names a Go tool by the package path of its main package, but the
+    // Go proxy serves modules only, and secure-registry.json5 has no direct
+    // fallback. Each rule points the lookup at the module that holds the tags.
+    {
+      description: 'mise Go tools: look up gosimports in its module',
+      matchManagers: [
+        'mise',
+      ],
+      matchDepNames: [
+        'go:github.com/rinchsan/gosimports/cmd/gosimports',
+      ],
+      overridePackageName: 'github.com/rinchsan/gosimports',
+    },
+    {
+      description: 'mise Go tools: look up govulncheck in its module',
+      matchManagers: [
+        'mise',
+      ],
+      matchDepNames: [
+        'go:golang.org/x/vuln/cmd/govulncheck',
+      ],
+      overridePackageName: 'golang.org/x/vuln',
+    },
+    {
+      description: 'mise Go tools: look up controller-gen in its module',
+      matchManagers: [
+        'mise',
+      ],
+      matchDepNames: [
+        'go:sigs.k8s.io/controller-tools/cmd/controller-gen',
+      ],
+      overridePackageName: 'sigs.k8s.io/controller-tools',
+    },
+    {
+      description: 'mise Go tools: look up protoc-gen-go in its module',
+      matchManagers: [
+        'mise',
+      ],
+      matchDepNames: [
+        'go:github.com/golang/protobuf/protoc-gen-go',
+      ],
+      overridePackageName: 'github.com/golang/protobuf',
+    },
   ],
 }
