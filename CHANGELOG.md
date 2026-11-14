@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.3](https://github.com/timescale/timescaledb-parallel-copy/compare/v0.13.2...v0.13.3) (2026-11-14)
+
+
+### Bug Fixes
+
+* inline the shared renovate presets ([#178](https://github.com/timescale/timescaledb-parallel-copy/issues/178)) ([3b852f1](https://github.com/timescale/timescaledb-parallel-copy/commit/3b852f1221a80cacee82ec0fceb829a15b751ecb))
+
 ## [0.13.2](https://github.com/timescale/timescaledb-parallel-copy/compare/v0.13.1...v0.13.2) (2026-11-10)
 
 
