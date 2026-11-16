@@ -12,7 +12,7 @@ COPY ./pkg pkg
 
 RUN go build -o /bin/timescaledb-parallel-copy ./cmd/timescaledb-parallel-copy
 
-FROM alpine:3.19 AS release
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS release
 
 COPY --from=builder /bin/timescaledb-parallel-copy /bin/timescaledb-parallel-copy
 
