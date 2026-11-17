@@ -9,7 +9,7 @@ jobs:
     name: Add issue to project
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/add-to-project@v2.0.1
+      - uses: actions/add-to-project@f2c1f1fa649a891be84948ea89b5dfba1526ef05 # v2.0.1
         with:
           project-url: https://github.com/orgs/timescale/projects/55
           # Token will expire Oct 2, 2022
