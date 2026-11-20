@@ -13,12 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
 	"github.com/jackc/pgx/v5"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/exec"
@@ -423,13 +422,13 @@ func runContainer(t *testing.T, opts ...testcontainers.ContainerCustomizer) (*po
 	testId := time.Now().Unix()
 	volumeName := fmt.Sprintf("test-volume-%d", testId)
 
-	dockerClient, err := client.NewClientWithOpts(client.FromEnv)
+	dockerClient, err := client.New(client.FromEnv)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer dockerClient.Close() //nolint:errcheck
 
-	_, err = dockerClient.VolumeCreate(ctx, volume.CreateOptions{
+	_, err = dockerClient.VolumeCreate(ctx, client.VolumeCreateOptions{
 		Name: volumeName,
 	})
 	if err != nil {
@@ -437,7 +436,7 @@ func runContainer(t *testing.T, opts ...testcontainers.ContainerCustomizer) (*po
 	}
 	t.Cleanup(func() {
 		t.Logf("removing container %s", volumeName)
-		err = dockerClient.VolumeRemove(context.Background(), volumeName, true)
+		_, err = dockerClient.VolumeRemove(context.Background(), volumeName, client.VolumeRemoveOptions{Force: true})
 		if err != nil {
 			t.Logf("failed to remove test volume %s", err.Error())
 		}
@@ -463,9 +462,9 @@ func runContainer(t *testing.T, opts ...testcontainers.ContainerCustomizer) (*po
 				Target: "/var/lib/postgresql/data",
 			})
 			if config.PortBindings == nil {
-				config.PortBindings = map[nat.Port][]nat.PortBinding{}
+				config.PortBindings = network.PortMap{}
 			}
-			config.PortBindings["5432/tcp"] = []nat.PortBinding{{HostPort: fmt.Sprintf("%d", port)}}
+			config.PortBindings[network.MustParsePort("5432/tcp")] = []network.PortBinding{{HostPort: fmt.Sprintf("%d", port)}}
 		}),
 	}
 	allOpts := slices.Concat(ownOpts, opts)
