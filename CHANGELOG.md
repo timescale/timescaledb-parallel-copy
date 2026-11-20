@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.14.0](https://github.com/timescale/timescaledb-parallel-copy/compare/v0.13.2...v0.14.0) (2026-11-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* rename to -dangerously-enable-client-side-sorting ([#143](https://github.com/timescale/timescaledb-parallel-copy/issues/143))
+
+### Features
+
+* rename to -dangerously-enable-client-side-sorting ([#143](https://github.com/timescale/timescaledb-parallel-copy/issues/143)) ([505e599](https://github.com/timescale/timescaledb-parallel-copy/commit/505e59942f1513fe99570ec9bbc8f87f590f9afc))
+
+
+### Bug Fixes
+
+* **deps:** update non-major dependencies ([#181](https://github.com/timescale/timescaledb-parallel-copy/issues/181)) ([400e0fb](https://github.com/timescale/timescaledb-parallel-copy/commit/400e0fb92ef5f21dcc0b590e0ca516e59efa62b3))
+* inline the shared renovate presets ([#178](https://github.com/timescale/timescaledb-parallel-copy/issues/178)) ([3b852f1](https://github.com/timescale/timescaledb-parallel-copy/commit/3b852f1221a80cacee82ec0fceb829a15b751ecb))
+* port tests to moby types required by testcontainers v0.45 ([#182](https://github.com/timescale/timescaledb-parallel-copy/issues/182)) ([1d884e6](https://github.com/timescale/timescaledb-parallel-copy/commit/1d884e6688a32b315d9c5eacb0004586ab53e8bd))
+
 ## [0.13.2](https://github.com/timescale/timescaledb-parallel-copy/compare/v0.13.1...v0.13.2) (2026-11-10)
 
 
