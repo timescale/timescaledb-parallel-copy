@@ -844,7 +844,7 @@ func (c *Copier) report(ctx context.Context) {
 }
 
 func (c *Copier) GetFullTableName() string {
-	return fmt.Sprintf(`"%s"."%s"`, c.schemaName, c.tableName)
+	return pgx.Identifier{c.schemaName, c.tableName}.Sanitize()
 }
 
 func (c *Copier) GetTableName() string {
