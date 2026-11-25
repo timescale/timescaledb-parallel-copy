@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.1](https://github.com/timescale/timescaledb-parallel-copy/compare/v0.14.0...v0.14.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* escape schema and table names in generated SQL ([#185](https://github.com/timescale/timescaledb-parallel-copy/issues/185)) ([a9614cc](https://github.com/timescale/timescaledb-parallel-copy/commit/a9614cced65038c102a9bdbe68f682ae22c22166))
+
 ## [0.14.0](https://github.com/timescale/timescaledb-parallel-copy/compare/v0.13.2...v0.14.0) (2026-11-23)
 
 
