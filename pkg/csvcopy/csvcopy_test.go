@@ -2201,3 +2201,67 @@ func TestAtomicityAssurance(t *testing.T) {
 	assert.Equal(t, 0, controlRowCount, "Control row must be rolled back")
 	t.Logf("SUCCESS: Current implementation maintains atomicity - both operations rolled back correctly")
 }
+
+func TestGetFullTableNameQuotesIdentifiers(t *testing.T) {
+	tests := []struct {
+		schema string
+		table  string
+		want   string
+	}{
+		{schema: "public", table: "metrics", want: `"public"."metrics"`},
+		{schema: "public", table: `imp"test`, want: `"public"."imp""test"`},
+		{schema: `my"schema`, table: `t"; DROP TABLE x; --`, want: `"my""schema"."t""; DROP TABLE x; --"`},
+	}
+	for _, tt := range tests {
+		c := &Copier{schemaName: tt.schema, tableName: tt.table}
+		assert.Equal(t, tt.want, c.GetFullTableName())
+	}
+}
+
+func TestCopyIntoTableWithQuoteInName(t *testing.T) {
+	ctx := context.Background()
+
+	pgContainer, err := postgres.Run(ctx,
+		"postgres:15.3-alpine",
+		postgres.WithDatabase("test-db"),
+		postgres.WithUsername("postgres"),
+		postgres.WithPassword("postgres"),
+		testcontainers.WithWaitStrategy(
+			wait.ForLog("database system is ready to accept connections").
+				WithOccurrence(2).WithStartupTimeout(5*time.Second)),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := pgContainer.Terminate(ctx); err != nil {
+			t.Fatalf("failed to terminate pgContainer: %s", err)
+		}
+	})
+
+	connStr, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	require.NoError(t, err)
+
+	db, err := sqlx.ConnectContext(ctx, "pgx/v5", connStr)
+	require.NoError(t, err)
+	defer db.Close() //nolint:errcheck
+
+	_, err = db.ExecContext(ctx, `create schema "my""schema"; create table "my""schema"."imp""test" (device_id int, label text)`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `insert into "my""schema"."imp""test" values (1, 'old')`)
+	require.NoError(t, err)
+
+	copier, err := NewCopier(connStr, `imp"test`,
+		WithSchemaName(`my"schema`),
+		WithColumns("device_id,label"),
+	)
+	require.NoError(t, err)
+	require.NoError(t, copier.Truncate())
+
+	r, err := copier.Copy(ctx, strings.NewReader("42,xasev\n24,qased\n"))
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, r.InsertedRows)
+
+	var rowCount int64
+	err = db.QueryRowContext(ctx, `select count(*) from "my""schema"."imp""test"`).Scan(&rowCount)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), rowCount, "truncate must clear the old row and copy must add two rows")
+}
